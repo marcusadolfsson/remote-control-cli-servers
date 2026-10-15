@@ -32,6 +32,7 @@ import {
   stampToIso,
   updateVersions,
 } from '../lib/format'
+import { isMacHost } from '../lib/mac-host'
 import { groupByServer } from '../lib/served'
 import { Icon, type IconName } from './icons'
 
@@ -364,7 +365,9 @@ function accountMenu(host: ConductorHost, a: ConductorAccount, model: OverviewMo
           run: () => act.confirm({ kind: 'deleteAccount', hostId: host.id, account: name }),
         },
   ]
-  return items.filter((item): item is MenuItem => item !== null)
+  // A shared Mac offers only its servers.
+  const offered = isMacHost(host.info) ? items.filter((item) => item?.value === 'server') : items
+  return offered.filter((item): item is MenuItem => item !== null)
 }
 
 function AccountBlock(ui: Ui, host: ConductorHost, a: ConductorAccount, model: OverviewModel, act: Act) {
@@ -420,7 +423,7 @@ function AccountBlock(ui: Ui, host: ConductorHost, a: ConductorAccount, model: O
           )}
         </Box>
       )}
-      {a.sessions.length === 0 && !a.error && <Text dimColor>{'    '}No sessions yet.</Text>}
+      {a.sessions.length === 0 && !a.error && !isMacHost(host.info) && <Text dimColor>{'    '}No sessions yet.</Text>}
       <Box flexDirection="column" marginTop={rest.length ? 1 : 0} rowGap={ui.surface === 'desktop' ? 1 : 0}>
         {[...running, ...shown].map((s, i, all) => SessionRow(ui, host, name, s, i === all.length - 1, model, act))}
       </Box>

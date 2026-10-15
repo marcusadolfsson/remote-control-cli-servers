@@ -1,4 +1,4 @@
-import type { LaunchResult, RcServer, RemoteAccount, RemoteSession, TransferPlan } from '../hooks/lib/wire'
+import type { HostInfo, LaunchResult, RcServer, RemoteAccount, RemoteSession, TransferPlan } from '../hooks/lib/wire'
 
 import { describe, expect, test } from 'claude-code/testing'
 
@@ -20,6 +20,7 @@ import { automaticMemory, memoryDecisions, planSummary, progressId } from '../ho
 import { accountNameHint, isValidAccountName, isValidSessionName, suffixProblem } from '../hooks/lib/names'
 import { decodeBase64Url, decodePairingCode, formatFingerprint } from '../hooks/lib/pairing'
 import { findSession, splitProfile } from '../hooks/lib/refs'
+import { isMacHost } from '../hooks/lib/mac-host'
 import { groupByServer, servingServer } from '../hooks/lib/served'
 import { launchNote, launchTitle, signOutBody, switchEffect } from '../hooks/lib/texts'
 import { sessionJson, toolDecisions } from '../hooks/lib/tools'
@@ -452,5 +453,14 @@ describe('sessions a Remote Control server serves', () => {
     const served = session('served', '/www/vb4', { served: true })
     expect(servingServer(served, [])).toBeUndefined()
     expect(groupByServer([served], null).rest).toEqual([served])
+  })
+})
+
+describe('mac host', () => {
+  test('a shared Mac is known by its version', () => {
+    const info = (serverVersion: string) => ({ serverVersion }) as HostInfo
+    expect(isMacHost(info('0.7.0 (Mac)'))).toBe(true)
+    expect(isMacHost(info('0.10.2'))).toBe(false)
+    expect(isMacHost(null)).toBe(false)
   })
 })
