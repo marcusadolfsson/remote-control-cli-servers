@@ -32,7 +32,7 @@ export function dialogTitle(dialog: ConductorDialog, view: ConductorView): strin
     case 'signIn':
       return dialog.isSwitch ? `Switch ${dialog.account}` : `Sign in ${dialog.account}`
     case 'newSession':
-      return `New session in ${dialog.account}`
+      return dialog.isServer ? `Remote Control server in ${dialog.account}` : `New session in ${dialog.account}`
     case 'renameSession':
       return 'Rename session'
     case 'move':
@@ -423,14 +423,25 @@ function NewSessionDialog(
     ...(listing?.parent ? [{ value: listing.parent, label: '..  up one folder' }] : []),
     ...(listing?.entries ?? []).map((e) => ({ value: e.path, label: `${e.name}/` })),
   ]
+  const running = listing
+    ? host?.accounts.find((a) => a.account.name === d.account)?.servers?.find((server) => server.folder === listing.path)
+    : undefined
   return [
-    Head(
-      ui,
-      'claude',
-      'claude',
-      `New session in ${d.account}`,
-      `On ${host?.label ?? 'the host'} · in tmux, with Remote Control on`,
-    ),
+    d.isServer
+      ? Head(
+          ui,
+          'remote',
+          'permission',
+          `Remote Control server in ${d.account}`,
+          `On ${host?.label ?? 'the host'} · lets the Claude apps start sessions in a folder`,
+        )
+      : Head(
+          ui,
+          'claude',
+          'claude',
+          `New session in ${d.account}`,
+          `On ${host?.label ?? 'the host'} · in tmux, with Remote Control on`,
+        ),
     Section(ui, 'Folder', [
       <Box key="path" gap={1} alignItems="center">
         {Icon(ui, 'folder', 'claude')}
@@ -463,6 +474,32 @@ function NewSessionDialog(
         </Box>
       ),
     ]),
+    d.isServer &&
+      running &&
+      Section(
+        ui,
+        'Already running',
+        [
+          Hint(
+            ui,
+            `${running.name ?? folderName(running.folder)} serves this folder (${running.spawn === 'worktree' ? 'a worktree per session' : 'sessions in this folder'}, ${running.sessions} now). Start sessions here from claude.ai or the Claude app.`,
+          ),
+        ],
+        'permission',
+      ),
+    d.isServer &&
+      Section(ui, 'Sessions', [
+        Check(ui, 'spawn-same', 'In this folder', d.spawn === 'same-dir', () => act.patch({ spawn: 'same-dir' })),
+        Check(ui, 'spawn-worktree', 'Each in a git worktree of its own', d.spawn === 'worktree', () =>
+          act.patch({ spawn: 'worktree' }),
+        ),
+        Hint(
+          ui,
+          d.spawn === 'worktree'
+            ? 'Sessions don’t step on each other’s files. The folder must be a git repository.'
+            : 'Every session the apps start works in this folder, so two can edit the same files.',
+        ),
+      ]),
     Section(ui, 'Name', [
       <Input
         key="name"
@@ -471,7 +508,12 @@ function NewSessionDialog(
         onInput={(value) => act.patch({ name: value, isNameTouched: true })}
         onSubmit={() => act.submit()}
       />,
-      Hint(ui, 'What Remote Control, tmux and this list call it. The folder’s name unless you change it.'),
+      Hint(
+        ui,
+        d.isServer
+          ? 'What the Claude apps call this server. The folder’s name unless you change it.'
+          : 'What Remote Control, tmux and this list call it. The folder’s name unless you change it.',
+      ),
     ]),
     Section(ui, 'Trust', [
       Check(ui, 'trust', 'Trust this folder', d.trustFolder, () => act.patch({ trustFolder: !d.trustFolder })),
@@ -483,7 +525,12 @@ function NewSessionDialog(
     ErrorBox(ui, d.error),
     Foot(
       ui,
-      { label: 'Start', isEnabled: listing !== null, isBusy: d.isBusy, onPress: act.submit },
+      {
+        label: d.isServer ? 'Start server' : 'Start',
+        isEnabled: listing !== null && !(d.isServer && running),
+        isBusy: d.isBusy,
+        onPress: act.submit,
+      },
       { label: 'Cancel', onPress: act.close },
     ),
   ]

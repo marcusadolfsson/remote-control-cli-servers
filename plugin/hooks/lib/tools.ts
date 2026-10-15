@@ -68,6 +68,44 @@ export const TOOL_SPECS: ReadonlyArray<{ name: string; description: string; inpu
     ),
   },
   {
+    name: 'list_rc_servers',
+    description:
+      "A profile's Remote Control servers: `claude remote-control` running in a folder, so the Claude apps on the person's other devices can start new sessions there. Each with its folder, how sessions are placed (spawn: same-dir, or worktree for one each), how many it serves, whether it was started from here (only those can be stopped here) and its claude.ai page.",
+    inputSchema: object({ profile }, ['profile']),
+  },
+  {
+    name: 'start_rc_server',
+    description:
+      "Start a Remote Control server (`claude remote-control`) in a folder on a host, in its own tmux window, so the Claude apps can start new sessions in that folder. If one runs there already, says so and starts nothing. Reports anything it stopped at (attention), such as Remote Control's one-time question to turn it on, which someone has to answer in the window.",
+    inputSchema: object(
+      {
+        profile,
+        folder: { type: 'string', description: 'The folder on the host, absolute or ~-relative.' },
+        name: { type: 'string', description: "What the Claude apps call it. The folder's name when left out." },
+        spawn: {
+          type: 'string',
+          enum: ['same-dir', 'worktree'],
+          description:
+            'same-dir (the default): every session works in the folder. worktree: each in a git worktree of its own; the folder must be a git repository.',
+        },
+        trust_folder: {
+          type: 'boolean',
+          description: 'Answer its "Trust <folder>?" question with yes. Default true.',
+        },
+      },
+      ['profile', 'folder'],
+    ),
+  },
+  {
+    name: 'stop_rc_server',
+    description:
+      'Stop a Remote Control server started from here, by its folder. The sessions it serves stop answering; starting a server in the folder again within a few hours brings them back.',
+    inputSchema: object(
+      { profile, folder: { type: 'string', description: 'The folder it serves, as list_rc_servers gives it.' } },
+      ['profile', 'folder'],
+    ),
+  },
+  {
     name: 'resume_session',
     description: 'Resume a session on a host, in tmux with Remote Control on. A running one is left as it is.',
     inputSchema: object({ profile, session }, ['profile', 'session']),

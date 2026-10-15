@@ -48,6 +48,9 @@ tab:
 - **See everything at once.** Every host as a card, its profiles (Claude accounts) and their
   sessions, refreshing on its own, with the ones waiting for you marked.
 - **Run sessions.** Start, resume, restart, stop, rename, archive and restore them.
+- **Let your phone start them.** Run a Remote Control server (`claude remote-control`) in any
+  project folder, from its session's menu or the profile's, and start fresh sessions there from
+  claude.ai or the Claude app. Servers started by hand are found too.
 - **Answer them.** A live view of a session's tmux window, with keys and a field to type into.
 - **Move them.** Send a session to another profile, with Claude merging any memory notes both
   sides changed.

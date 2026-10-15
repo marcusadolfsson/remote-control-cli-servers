@@ -8,6 +8,7 @@ import type {
   DirListing,
   HostInfo,
   LaunchResult,
+  RcServer,
   RemoteAccount,
   RemoteSession,
   TransferPlan,
@@ -21,7 +22,21 @@ const DAY = 24 * HOUR
 
 type DemoHost = PairedHost & {
   info: HostInfo
-  accounts: Array<{ account: RemoteAccount; sessions: Array<RemoteSession> }>
+  accounts: Array<{ account: RemoteAccount; sessions: Array<RemoteSession>; servers?: Array<RcServer> }>
+}
+
+/** A Remote Control server, started from here in a window of its own. */
+function server(pid: number, folder: string, name: string, spawn: string, sessions: number): RcServer {
+  return {
+    pid,
+    folder,
+    name,
+    spawn,
+    sessions,
+    window: { session: 'ai', windowId: `@${pid % 100}`, paneId: `%${pid % 100}` },
+    environmentUrl: `https://claude.ai/code?environment=env_demo${pid}`,
+    attention: null,
+  }
 }
 
 const ago = (now: number, ms: number) => new Date(now - ms).toISOString()
@@ -114,6 +129,7 @@ export function demoHosts(now: number): Array<DemoHost> {
             session(now, 'docs-site', '/home/sam/northwind/docs', 3 * DAY),
             session(now, 'flaky-tests', '/home/sam/northwind/ci', 12 * DAY),
           ],
+          servers: [server(4121, '/home/sam/northwind', 'northwind (ATL)', 'worktree', 2)],
         },
         {
           account: account('personal', 'sam.lee@fastmail.com', 'Pro', 9 * DAY, now),
@@ -238,6 +254,20 @@ export function demoAnswer(hostId: string, method: string, url: string, body: un
       '@40',
       host.info.settings?.remoteControlSuffix ? `${name} (${host.info.settings.remoteControlSuffix})` : name,
     )
+  }
+  if (parts[1] === 'accounts' && parts[3] === 'rc-servers') {
+    const a = find(parts[2]) ?? reject()
+    if (method === 'GET' && parts.length === 4) return a?.servers ?? []
+    if (method === 'POST' && parts[5] === 'stop') return { wasRunning: true }
+    if (method === 'POST' && parts.length === 4) {
+      const request = body as { folder?: string; name?: string; spawn?: string }
+      const folder = request.folder ?? '/home/sam'
+      return {
+        server: server(4200, folder, request.name ?? folder.split('/').pop() ?? 'demo', request.spawn ?? 'same-dir', 0),
+        alreadyRunning: false,
+        attachCommand: 'tmux attach -t ai \\; select-window -t @0',
+      }
+    }
   }
   if (parts[1] === 'accounts' && parts[3] === 'archived' && method === 'GET') {
     const archived: Array<ArchivedSession> = [

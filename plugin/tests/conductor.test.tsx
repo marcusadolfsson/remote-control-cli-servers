@@ -75,6 +75,34 @@ const ROUTES: Record<string, unknown> = {
   ],
   'GET /v1/accounts/Misc/sessions': [RUNNING, WAITING, STOPPED],
   'GET /v1/accounts/Work/sessions': [],
+  'GET /v1/accounts/Misc/rc-servers': [
+    {
+      pid: 4121,
+      folder: '/home/m/proj',
+      name: 'proj (orion)',
+      spawn: 'same-dir',
+      sessions: 1,
+      window: { session: 'ai', windowId: '@9', paneId: '%9' },
+      environmentUrl: 'https://claude.ai/code?environment=env_01abc',
+      attention: null,
+    },
+  ],
+  'GET /v1/accounts/Work/rc-servers': [],
+  'POST /v1/accounts/Misc/rc-servers/4121/stop': { wasRunning: true },
+  'POST /v1/accounts/Misc/rc-servers': {
+    server: {
+      pid: 4122,
+      folder: '/home/m',
+      name: 'm (orion)',
+      spawn: 'worktree',
+      sessions: 0,
+      window: { session: 'ai', windowId: '@10', paneId: '%10' },
+      environmentUrl: 'https://claude.ai/code?environment=env_02abc',
+      attention: null,
+    },
+    alreadyRunning: false,
+    attachCommand: 'tmux attach -t ai',
+  },
   'GET /v1/accounts/Misc/archived': [
     {
       id: '44444444-4444-4444-8444-444444444444',
@@ -352,6 +380,52 @@ describe('the hosts pane', () => {
       await pane.press({ key: `mi-hm-${HOST_ID}-settings` })
       d = await dialog()
       expect(await d.find({ key: 'suffix' }), 'check 10').toBeDefined()
+      await d.unmount()
+      await pane.unmount()
+    })
+  }
+})
+
+describe('Remote Control servers', () => {
+  for (const surface of SURFACES) {
+    test(`lists, stops and starts them on the ${surface}`, async ($, on) => {
+      const calls: Calls = []
+      fakeHost(on, calls)
+      await $.command.run(hostsText)
+      const pane = await $.ui.mount({
+        plugin: 'remote-control-cli-servers',
+        surface,
+        component: 'Pane',
+        requestId: 'conductor-hosts',
+        props: paneProps('CLI Servers', 100, 'dock'),
+      })
+      const dialog = () =>
+        $.ui.mount({
+          plugin: 'remote-control-cli-servers',
+          surface,
+          component: 'Pane',
+          requestId: 'conductor-dialog',
+          props: paneProps('Dialog', 90, 'inline'),
+        })
+      expect(await pane.find({ type: 'Text', text: /proj \(orion\)/ }), 'the server row').toBeDefined()
+
+      // Stop asks first.
+      await pane.press({ key: 'rm-4121' })
+      await pane.press({ key: 'mi-rm-4121-stop' })
+      let d = await dialog()
+      expect(await d.find({ type: 'Text', text: /stop answering/ })).toBeDefined()
+      await d.press({ key: 'submit' })
+      expect(calls).toContain('POST /v1/accounts/Misc/rc-servers/4121/stop')
+      await d.unmount()
+
+      // Start one from the account's menu, a worktree per session.
+      await pane.press({ key: `am-${HOST_ID}/Misc` })
+      await pane.press({ key: `mi-am-${HOST_ID}/Misc-server` })
+      d = await dialog()
+      expect(await d.find({ type: 'Text', text: /Remote Control server in Misc/ })).toBeDefined()
+      await d.press({ key: 'spawn-worktree' })
+      await d.press({ key: 'submit' })
+      expect(calls).toContain('POST /v1/accounts/Misc/rc-servers')
       await d.unmount()
       await pane.unmount()
     })

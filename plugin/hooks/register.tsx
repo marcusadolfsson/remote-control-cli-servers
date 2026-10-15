@@ -24,9 +24,11 @@ import type {
   LogoutResult,
   MoveProgress,
   PairResponse,
+  RcServer,
   RemoteAccount,
   RemoteSession,
   RenameSessionResult,
+  StartRcServerResult,
   TransferPlan,
   TransferReport,
   WindowKey,
@@ -220,6 +222,16 @@ const sessionPath = (account: string, sessionId: string, action: string) =>
 
 // ── Reading ──
 
+/** An account's Remote Control servers, or null from a server too old to have them. */
+async function readServers($: Engine, host: PairedHost, account: string): Promise<Array<RcServer> | null> {
+  try {
+    return (await call($, host, 'GET', `/v1/accounts/${enc(account)}/rc-servers`)) as Array<RcServer>
+  } catch (err) {
+    if (errorCode(err) === 'http_404') return null
+    throw err
+  }
+}
+
 async function readHost($: Engine, host: PairedHost): Promise<ConductorHost> {
   const base = { id: host.id, label: host.label, hostname: host.hostname, address: null, info: null, accounts: [] }
   try {
@@ -234,7 +246,7 @@ async function readHost($: Engine, host: PairedHost): Promise<ConductorHost> {
             'GET',
             `/v1/accounts/${enc(account.name)}/sessions`,
           )) as Array<RemoteSession>
-          return { account, sessions, error: null }
+          return { account, sessions, servers: await readServers($, host, account.name), error: null }
         } catch (err) {
           return { account, sessions: [], error: errorText(err, `Could not read ${host.label}'s sessions.`) }
         }
@@ -472,6 +484,16 @@ async function confirmDialog($: Engine, action: ConductorConfirmAction): Promise
   const label = host?.label ?? 'the host'
   const base = { kind: 'confirm' as const, action, error: null, isBusy: false }
   switch (action.kind) {
+    case 'stopServer':
+      return {
+        ...base,
+        title: 'Stop this Remote Control server?',
+        body: `${action.folder}\n\nThe Claude apps can no longer start sessions in this folder${
+          action.sessions ? `, and the ${count(action.sessions, 'session')} it serves stop answering` : ''
+        }. Starting a server here again within a few hours brings them back.`,
+        confirmLabel: 'Stop',
+        isDanger: true,
+      }
     case 'stop': {
       const session = host?.accounts
         .find((a) => a.account.name === action.target.account)
@@ -544,6 +566,10 @@ async function confirmDialog($: Engine, action: ConductorConfirmAction): Promise
 /** Does what a confirm dialog confirmed; the note to show after. */
 async function runConfirmed($: Engine, action: ConductorConfirmAction): Promise<ConductorNote> {
   switch (action.kind) {
+    case 'stopServer': {
+      await callHost($, action.hostId, 'POST', `/v1/accounts/${enc(action.account)}/rc-servers/${action.pid}/stop`, {})
+      return { tone: 'success', text: 'Stopped the Remote Control server', detail: action.folder }
+    }
     case 'stop': {
       const t = action.target
       await callHost($, t.hostId, 'POST', sessionPath(t.account, t.sessionId, 'stop'), {})
@@ -988,6 +1014,7 @@ async function browse($: Engine, path: string | null) {
 
 async function startSession($: Engine, d: Extract<ConductorDialog, { kind: 'newSession' }>) {
   if (!d.listing) return
+  if (d.isServer) return startServer($, d)
   await patchDialog($, 'newSession', { isBusy: true, error: null })
   try {
     const name = d.name.trim()
@@ -1018,6 +1045,43 @@ async function startSession($: Engine, d: Extract<ConductorDialog, { kind: 'newS
     void refresh($)
   } catch (err) {
     await patchDialog($, 'newSession', { isBusy: false, error: errorText(err, 'The session could not be started.') })
+  }
+}
+
+/** Start a Remote Control server in the dialog's folder, or show the one running there. */
+async function startServer($: Engine, d: Extract<ConductorDialog, { kind: 'newSession' }>) {
+  if (!d.listing) return
+  await patchDialog($, 'newSession', { isBusy: true, error: null })
+  try {
+    const name = d.name.trim()
+    const started = (await callHost(
+      $,
+      d.hostId,
+      'POST',
+      `/v1/accounts/${enc(d.account)}/rc-servers`,
+      { folder: d.listing.path, ...(name ? { name } : {}), spawn: d.spawn, trustFolder: d.trustFolder },
+      45,
+    )) as StartRcServerResult
+    const server = started.server
+    const title = server.name ?? folderName(server.folder)
+    if (server.attention && server.window) {
+      const target = { hostId: d.hostId, account: d.account, sessionId: '', title }
+      await openWindowDialog($, target, server.window.windowId, null)
+    } else {
+      await closeDialog($)
+      await setNote($, {
+        tone: 'success',
+        text: started.alreadyRunning ? `A Remote Control server already runs in ${title}` : `Started a Remote Control server in ${title}`,
+        detail: 'Start sessions in this folder from claude.ai or the Claude app: it shows up as an environment there.',
+      })
+    }
+    void refresh($)
+  } catch (err) {
+    const message =
+      errorCode(err) === 'http_404'
+        ? 'This host’s server is too old to start Remote Control servers: update it first.'
+        : errorText(err, 'The Remote Control server could not be started.')
+    await patchDialog($, 'newSession', { isBusy: false, error: message })
   }
 }
 
@@ -1314,11 +1378,13 @@ async function openSignInDialog($: Engine, hostId: string, account: string, isSw
   if (!isSwitch) await startSignIn($)
 }
 
-async function openNewSession($: Engine, hostId: string, account: string) {
+async function openNewSession($: Engine, hostId: string, account: string, isServer = false, folder: string | null = null) {
   await openDialog($, {
     kind: 'newSession',
     hostId,
     account,
+    isServer,
+    spawn: 'same-dir',
     listing: null,
     name: '',
     isNameTouched: false,
@@ -1326,7 +1392,7 @@ async function openNewSession($: Engine, hostId: string, account: string) {
     error: null,
     isBusy: false,
   })
-  await browse($, null)
+  await browse($, folder)
 }
 
 async function openMove($: Engine, target: ConductorTarget) {
@@ -1394,6 +1460,19 @@ async function resolveSession($: Engine, host: PairedHost, account: string, ref:
   const found = findSession(sessions, ref)
   if (!isFound(found)) throw new Error(found.error)
   return found
+}
+
+/** A Remote Control server, as the tools report it. */
+function serverJson(server: RcServer) {
+  return {
+    folder: server.folder,
+    name: server.name,
+    spawn: server.spawn,
+    sessions: server.sessions,
+    startedHere: server.window !== null,
+    environmentUrl: server.environmentUrl,
+    attention: server.attention,
+  }
 }
 
 function launchJson(launch: LaunchResult) {
@@ -1477,6 +1556,43 @@ async function runTool($: Engine, name: string, input: ToolInput): Promise<unkno
       )) as LaunchResult
       void refresh($)
       return launchJson(launch)
+    }
+    case 'list_rc_servers': {
+      const { host, account } = await resolveProfile($, str(input, 'profile'))
+      const servers = await readServers($, host, account.name)
+      if (servers === null) throw new Error(`${host.label}'s server is too old for Remote Control servers: update it.`)
+      return { servers: servers.map(serverJson) }
+    }
+    case 'start_rc_server': {
+      const { host, account } = await resolveProfile($, str(input, 'profile'))
+      const spawn = input.spawn === 'worktree' ? 'worktree' : 'same-dir'
+      const started = (await call(
+        $,
+        host,
+        'POST',
+        `/v1/accounts/${enc(account.name)}/rc-servers`,
+        {
+          folder: str(input, 'folder'),
+          ...(typeof input.name === 'string' && input.name.trim() ? { name: input.name.trim() } : {}),
+          spawn,
+          trustFolder: input.trust_folder !== false,
+        },
+        45,
+      )) as StartRcServerResult
+      void refresh($)
+      return { alreadyRunning: started.alreadyRunning, server: serverJson(started.server) }
+    }
+    case 'stop_rc_server': {
+      const { host, account } = await resolveProfile($, str(input, 'profile'))
+      const folder = str(input, 'folder').replace(/\/+$/, '')
+      const servers = (await readServers($, host, account.name)) ?? []
+      const server = servers.find(
+        (s) => s.folder === folder || (folder.startsWith('~/') && s.folder.endsWith(folder.slice(1))),
+      )
+      if (!server) throw new Error(`No Remote Control server runs in ${folder} for ${host.label}/${account.name}.`)
+      await call($, host, 'POST', `/v1/accounts/${enc(account.name)}/rc-servers/${server.pid}/stop`, {})
+      void refresh($)
+      return { stopped: server.folder, sessions: server.sessions }
     }
     case 'resume_session':
     case 'restart_session': {
@@ -1741,11 +1857,14 @@ function viewActions($: Engine): Act {
     restart: (t) => void restart($, t),
     openClaude: (t, bridge) => void openOnClaude($, t, bridge),
     openClaudeApp: (t, bridge) => void openInClaudeApp($, t, bridge),
+    openEnvironment: (hostId, url) =>
+      void (url.startsWith('https://claude.ai/code?environment=') && openUrl($, url, hostId)),
     openWindow: (t, windowId) => void openWindowDialog($, t, windowId, null),
     restore: (hostId, account, a) => void restore($, hostId, account, a),
     confirm: (action) => void (async () => openDialog($, await confirmDialog($, action)))(),
     openDialog: (value) => void openDialog($, value),
     openNewSession: (hostId, account) => void openNewSession($, hostId, account),
+    openNewServer: (hostId, account, folder) => void openNewSession($, hostId, account, true, folder),
     openSignIn: (hostId, account, isSwitch) => void openSignInDialog($, hostId, account, isSwitch),
     openMove: (t) => void openMove($, t),
   }

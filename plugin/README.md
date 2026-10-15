@@ -35,7 +35,8 @@ gets the same as tools.
   `host_info`, `list_folders`, `new_session`, `resume_session`, `restart_session`,
   `restart_outdated`, `stop_session`, `rename_session`, `read_window`, `send_to_window`,
   `open_in_claude`, `sign_in`, `switch_account`, `finish_sign_in`, `plan_move`, `move_session`,
-  `archive_session`, `restore_session`, `delete_archive`.
+  `archive_session`, `restore_session`, `delete_archive`, `list_rc_servers`, `start_rc_server`,
+  `stop_rc_server`.
 
 ## What it runs, reads and sends
 
@@ -99,7 +100,7 @@ directory can't read the whole command off the source. Nothing else runs under `
 
 Only to your paired hosts, over pinned HTTPS with that host's token: the requests the pane and the
 tools make (list, start, resume, stop, rename, move or archive sessions, read or type into a tmux
-window, sign a profile in or out), and, while the band is on, a read of each host's sessions every
+window, sign a profile in or out, start or stop a Remote Control server in a folder), and, while the band is on, a read of each host's sessions every
 30 seconds. When pairing, it also sends the one-time secret from the pairing
 code and your Mac's name.
 

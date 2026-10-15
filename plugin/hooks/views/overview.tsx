@@ -15,6 +15,7 @@ import type {
   ConductorSelection,
   ConductorTarget,
   ConductorView,
+  RcServer,
   RemoteSession,
 } from '../../types'
 import type { Act, Ui } from './act'
@@ -22,6 +23,7 @@ import type { Act, Ui } from './act'
 import {
   claudeVersion,
   count,
+  folderName,
   formatBytes,
   relativeTime,
   sessionTitle,
@@ -318,6 +320,14 @@ function accountMenu(host: ConductorHost, a: ConductorAccount, model: OverviewMo
   const isArchivedShown = accountKey(host.id, name) in model.archived
   const items: Array<MenuItem | null> = [
     { value: 'newSession', label: 'New session…', hotkey: 'n', run: () => act.openNewSession(host.id, name) },
+    Array.isArray(a.servers)
+      ? {
+          value: 'server',
+          label: 'Remote Control server…',
+          hotkey: 'e',
+          run: () => act.openNewServer(host.id, name, null),
+        }
+      : null,
     a.account.signedIn
       ? { value: 'switch', label: 'Switch account…', hotkey: 's', run: () => act.openSignIn(host.id, name, true) }
       : { value: 'signIn', label: 'Sign in…', hotkey: 'i', run: () => act.openSignIn(host.id, name, false) },
@@ -401,6 +411,11 @@ function AccountBlock(ui: Ui, host: ConductorHost, a: ConductorAccount, model: O
         </Text>
       )}
       {a.error && <Text color="error"> {a.error}</Text>}
+      {(a.servers?.length ?? 0) > 0 && (
+        <Box flexDirection="column" marginTop={1} rowGap={ui.surface === 'desktop' ? 1 : 0}>
+          {(a.servers ?? []).map((server) => ServerRow(ui, host, name, server, model, act))}
+        </Box>
+      )}
       {a.sessions.length === 0 && !a.error && <Text dimColor>{'    '}No sessions yet.</Text>}
       <Box flexDirection="column" marginTop={a.sessions.length ? 1 : 0} rowGap={ui.surface === 'desktop' ? 1 : 0}>
         {[...running, ...shown].map((s, i, all) => SessionRow(ui, host, name, s, i === all.length - 1, model, act))}
@@ -439,7 +454,18 @@ function Marks(ui: Ui, session: RemoteSession) {
   )
 }
 
-function sessionMenu(host: ConductorHost, target: ConductorTarget, session: RemoteSession, act: Act): Array<MenuItem> {
+/** The Remote Control server running in `folder`, if any. */
+function serverIn(servers: Array<RcServer> | null | undefined, folder: string | null): RcServer | undefined {
+  return folder ? servers?.find((server) => server.folder === folder) : undefined
+}
+
+function sessionMenu(
+  host: ConductorHost,
+  target: ConductorTarget,
+  session: RemoteSession,
+  servers: Array<RcServer> | null | undefined,
+  act: Act,
+): Array<MenuItem> {
   const windowId = session.window?.windowId ?? ''
   const inServerWindow = Boolean(session.window && host.info?.tmux && session.window.session === host.info.tmux.session)
   const items: Array<MenuItem | null> = [
@@ -466,7 +492,8 @@ function sessionMenu(host: ConductorHost, target: ConductorTarget, session: Remo
     session.running && inServerWindow && !session.waiting
       ? { value: 'window', label: 'Tmux Window…', hotkey: 'w', run: () => act.openWindow(target, windowId) }
       : null,
-    session.running
+    // A served session comes back with its server, not on its own.
+    session.running && !session.served
       ? {
           value: 'restart',
           hotkey: 't',
@@ -495,8 +522,93 @@ function sessionMenu(host: ConductorHost, target: ConductorTarget, session: Remo
     session.running
       ? null
       : { value: 'archive', label: 'Archive…', hotkey: 'v', run: () => act.confirm({ kind: 'archive', target }) },
+    Array.isArray(servers) && session.cwd && !serverIn(servers, session.cwd)
+      ? {
+          value: 'server',
+          label: 'Remote Control server here…',
+          hotkey: 'e',
+          run: () => act.openNewServer(target.hostId, target.account, session.cwd),
+        }
+      : null,
   ]
   return items.filter((item): item is MenuItem => item !== null)
+}
+
+function serverMenu(host: ConductorHost, account: string, server: RcServer, act: Act): Array<MenuItem> {
+  const title = server.name ?? folderName(server.folder)
+  const target: ConductorTarget = { hostId: host.id, account, sessionId: '', title }
+  const items: Array<MenuItem | null> = [
+    server.window
+      ? {
+          value: 'window',
+          label: server.attention ? 'Answer…' : 'Tmux Window…',
+          hotkey: server.attention ? 'a' : 'w',
+          run: () => act.openWindow(target, server.window?.windowId ?? ''),
+        }
+      : null,
+    server.environmentUrl
+      ? {
+          value: 'open',
+          label: 'Open on claude.ai',
+          hotkey: 'o',
+          run: () => act.openEnvironment(host.id, server.environmentUrl ?? ''),
+        }
+      : null,
+    server.window
+      ? {
+          value: 'stop',
+          label: 'Stop…',
+          hotkey: 's',
+          run: () =>
+            act.confirm({
+              kind: 'stopServer',
+              hostId: host.id,
+              account,
+              pid: server.pid,
+              folder: server.folder,
+              sessions: server.sessions,
+            }),
+        }
+      : null,
+  ]
+  return items.filter((item): item is MenuItem => item !== null)
+}
+
+/** A Remote Control server: the folder the Claude apps can start sessions in, and how. */
+function ServerRow(ui: Ui, host: ConductorHost, account: string, server: RcServer, model: OverviewModel, act: Act) {
+  const { Box, Text } = ui
+  const isTerminal = ui.surface === 'terminal'
+  const title = server.name ?? folderName(server.folder)
+  const detail = [
+    shortenHome(server.folder, host.info?.home ?? null),
+    server.spawn === 'worktree' ? 'a worktree per session' : 'sessions in this folder',
+    count(server.sessions, 'session'),
+    server.window ? null : 'started elsewhere',
+  ]
+    .filter(Boolean)
+    .join(' · ')
+  const items = serverMenu(host, account, server, act)
+  return (
+    <Box
+      key={`rc-${server.pid}`}
+      justifyContent="space-between"
+      alignItems="center"
+      paddingLeft={isTerminal ? 1 : 3}
+      hover={{ backgroundColor: 'userMessageBackgroundHover' }}
+    >
+      <Box gap={1} flexGrow={1} flexShrink={1} minWidth={0} overflow="hidden" alignItems="center">
+        {Icon(ui, 'remote', server.attention ? 'warning' : 'permission')}
+        <Text wrap="truncate-end">
+          <Text bold>Remote Control</Text> {title}
+          <Text dimColor> · {detail}</Text>
+        </Text>
+      </Box>
+      <Box gap={1} flexShrink={0} alignItems="center">
+        {server.attention && <Text color="warning">Waiting for you</Text>}
+        {items.length > 0 && Menu(ui, `rm-${server.pid}`, items, model, act)}
+      </Box>
+    </Box>
+  )
 }
 
 function SessionRow(
@@ -518,7 +630,8 @@ function SessionRow(
   const isTerminal = ui.surface === 'terminal'
   const branch = isTerminal ? <Text color="promptBorder">{isLast ? '└─' : '├─'}</Text> : null
   const glyph = isBusy ? <Text color="claude">…</Text> : Icon(ui, state.icon, state.tone)
-  const items = sessionMenu(host, target, session, act)
+  const servers = host.accounts.find((a) => a.account.name === account)?.servers
+  const items = sessionMenu(host, target, session, servers, act)
   return (
     <Box
       key={`s-${session.id}`}

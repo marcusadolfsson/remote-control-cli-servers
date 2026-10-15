@@ -54,9 +54,26 @@ export type RemoteSession = {
   claudeVersion?: string | null
   updatePending?: boolean
   installedVersion?: string | null
+  /** Started and served by a Remote Control server (`claude remote-control`). */
+  served?: boolean
 }
 
-export type AttentionKind = 'trustPrompt' | 'trustPermissions' | 'waiting'
+export type AttentionKind = 'trustPrompt' | 'trustPermissions' | 'waiting' | 'enableRemoteControl'
+
+/** A Remote Control server: `claude remote-control` in a folder, so the Claude apps can start sessions there. */
+export type RcServer = {
+  pid: number
+  folder: string
+  name: string | null
+  spawn: string
+  sessions: number
+  /** Its window, when the host's server started it: then it can be shown and stopped. */
+  window: TmuxWindow | null
+  environmentUrl: string | null
+  attention: { kind: AttentionKind; text: string } | null
+}
+
+export type StartRcServerResult = { server: RcServer; alreadyRunning: boolean; attachCommand: string | null }
 
 export type LaunchResult = {
   window: TmuxWindow
@@ -143,6 +160,8 @@ export type PairResponse = { clientId: string; info: HostInfo }
 export type ConductorAccount = {
   account: RemoteAccount
   sessions: Array<RemoteSession>
+  /** Its Remote Control servers; null on a server too old to say. */
+  servers?: Array<RcServer> | null
   error: string | null
 }
 
@@ -209,6 +228,10 @@ export type ConductorDialog =
       kind: 'newSession'
       hostId: string
       account: string
+      /** A Remote Control server in the folder rather than a session. */
+      isServer: boolean
+      /** For a server: each session in the folder (`same-dir`) or in a git worktree of its own. */
+      spawn: 'same-dir' | 'worktree'
       listing: DirListing | null
       name: string
       isNameTouched: boolean
@@ -271,6 +294,7 @@ export type ConductorConfirmAction =
   | { kind: 'signOut'; hostId: string; account: string; running: number }
   | { kind: 'deleteAccount'; hostId: string; account: string }
   | { kind: 'removeHost'; hostId: string }
+  | { kind: 'stopServer'; hostId: string; account: string; pid: number; folder: string; sessions: number }
 
 declare module 'claude-code' {
   interface PluginState {

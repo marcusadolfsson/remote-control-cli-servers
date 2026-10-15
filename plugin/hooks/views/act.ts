@@ -30,6 +30,8 @@ export type Act = {
   resume: (target: ConductorTarget) => void
   restart: (target: ConductorTarget) => void
   openClaude: (target: ConductorTarget, bridgeSessionId: string) => void
+  /** Opens a Remote Control server's page on claude.ai. */
+  openEnvironment: (hostId: string, url: string) => void
   openClaudeApp: (target: ConductorTarget, bridgeSessionId: string) => void
   openWindow: (target: ConductorTarget, windowId: string) => void
   restore: (hostId: string, account: string, archived: ArchivedSession) => void
@@ -37,6 +39,8 @@ export type Act = {
 
   openDialog: (dialog: ConductorDialog) => void
   openNewSession: (hostId: string, account: string) => void
+  /** Opens the dialog for a Remote Control server, in `folder` when given. */
+  openNewServer: (hostId: string, account: string, folder: string | null) => void
   openSignIn: (hostId: string, account: string, isSwitch: boolean) => void
   openMove: (target: ConductorTarget) => void
 }
