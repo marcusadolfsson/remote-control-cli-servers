@@ -49,6 +49,11 @@ pub fn working_dir(pid: i32) -> Option<PathBuf> {
     system::working_dir(pid)
 }
 
+/// The program process `pid` runs, its links resolved.
+pub fn executable(pid: i32) -> Option<PathBuf> {
+    system::executable(pid)
+}
+
 fn lossy(bytes: &[u8]) -> String {
     String::from_utf8_lossy(bytes).into_owned()
 }
@@ -126,6 +131,10 @@ mod system {
 
     pub fn working_dir(pid: i32) -> Option<PathBuf> {
         fs::read_link(format!("/proc/{pid}/cwd")).ok()
+    }
+
+    pub fn executable(pid: i32) -> Option<PathBuf> {
+        fs::read_link(format!("/proc/{pid}/exe")).ok()
     }
 }
 
@@ -232,6 +241,19 @@ mod system {
         let path = CStr::from_bytes_until_nul(&path).ok()?.to_str().ok()?;
         (!path.is_empty()).then(|| PathBuf::from(path))
     }
+
+    pub fn executable(pid: i32) -> Option<PathBuf> {
+        let mut buffer = vec![0u8; libc::PROC_PIDPATHINFO_MAXSIZE as usize];
+        let size = u32::try_from(buffer.len()).ok()?;
+        // SAFETY: the buffer is `size` bytes, and the call writes no more.
+        let written =
+            unsafe { libc::proc_pidpath(pid, buffer.as_mut_ptr().cast::<c_void>(), size) };
+        let written = usize::try_from(written)
+            .ok()
+            .filter(|written| *written > 0)?;
+        buffer.truncate(written);
+        String::from_utf8(buffer).ok().map(PathBuf::from)
+    }
 }
 
 #[cfg(not(any(target_os = "linux", target_os = "macos")))]
@@ -253,11 +275,23 @@ mod system {
     pub fn working_dir(_pid: i32) -> Option<PathBuf> {
         None
     }
+
+    pub fn executable(_pid: i32) -> Option<PathBuf> {
+        None
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn knows_the_program_a_process_runs() {
+        let pid = i32::try_from(std::process::id()).unwrap();
+        let program = executable(pid).unwrap();
+        assert_eq!(program, std::env::current_exe().unwrap().canonicalize().unwrap());
+    }
 
     #[test]
     fn reads_the_parent_after_a_name_with_parentheses() {

@@ -11,6 +11,7 @@ import {
   shortenHome,
   signInLeft,
   stampToIso,
+  updateVersions,
 } from '../hooks/lib/format'
 import { addressOrder, findHost, mergeHosts, parseHostList } from '../hooks/lib/hosts'
 import { bandDetail, bandModel, bandParts } from '../hooks/lib/band'
@@ -462,5 +463,13 @@ describe('mac host', () => {
     expect(isMacHost(info('0.7.0 (Mac)'))).toBe(true)
     expect(isMacHost(info('0.10.2'))).toBe(false)
     expect(isMacHost(null)).toBe(false)
+  })
+})
+
+describe('server updates', () => {
+  test('a Remote Control server waiting on an update says from what to what', () => {
+    const server = { updatePending: true, claudeVersion: '2.1.293', installedVersion: '2.1.300' } as RcServer
+    expect(updateVersions(server)).toBe('2.1.293 → 2.1.300')
+    expect(updateVersions({ ...server, updatePending: false })).toBeNull()
   })
 })

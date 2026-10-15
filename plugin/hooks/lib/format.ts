@@ -60,10 +60,12 @@ export function sessionTitle(session: Pick<RemoteSession, 'id' | 'title' | 'last
   return session.title?.trim() || session.lastPrompt?.trim() || session.id.slice(0, 8)
 }
 
-/** `2.1.282 → 2.1.287` for a session waiting on a restart to update. */
-export function updateVersions(session: RemoteSession): string | null {
-  if (!session.updatePending) return null
-  return `${session.claudeVersion ?? 'older'} → ${session.installedVersion ?? 'newer'}`
+/** `2.1.282 → 2.1.287` for a session or Remote Control server waiting on a restart to update. */
+export function updateVersions(
+  running: Pick<RemoteSession, 'updatePending' | 'claudeVersion' | 'installedVersion'>,
+): string | null {
+  if (!running.updatePending) return null
+  return `${running.claudeVersion ?? 'older'} → ${running.installedVersion ?? 'newer'}`
 }
 
 /** An archive stamp (`20261002-142535`) as a time. */

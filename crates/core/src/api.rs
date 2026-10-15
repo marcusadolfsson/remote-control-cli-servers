@@ -275,6 +275,16 @@ pub struct RcServer {
     pub environment_url: Option<String>,
     /// It's waiting for someone in its window before it connects.
     pub attention: Option<Attention>,
+    /// The Claude Code it runs, when its program says (a native install keeps
+    /// each version in a folder named after it).
+    #[serde(default)]
+    pub claude_version: Option<String>,
+    /// A newer Claude Code is installed: restarting the server runs it.
+    #[serde(default)]
+    pub update_pending: bool,
+    /// That newer version, while an update is pending.
+    #[serde(default)]
+    pub installed_version: Option<String>,
 }
 
 /// `POST /v1/accounts/{name}/rc-servers`: start a Remote Control server in a

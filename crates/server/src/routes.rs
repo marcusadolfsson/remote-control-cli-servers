@@ -833,7 +833,11 @@ async fn list_rc_servers(
 ) -> Result<Json<Vec<conductor_core::api::RcServer>>, ApiError> {
     blocking(move || {
         let account = account_or_404(&state, &name)?;
-        Ok(Json(crate::rc_servers::list(&state.tmux, &account)))
+        let mut servers = crate::rc_servers::list(&state.tmux, &account);
+        if let Some(installed) = state.installed_claude_version() {
+            crate::rc_servers::mark_updates(&mut servers, &installed);
+        }
+        Ok(Json(servers))
     })
     .await
 }

@@ -187,11 +187,36 @@ pub fn list(tmux: &Tmux, account: &AccountDir) -> Vec<RcServer> {
                     _ => None,
                 },
                 attention: screen.and_then(|(screen, text)| attention(&screen, &text)),
+                claude_version: process_info::executable(process.pid)
+                    .as_deref()
+                    .and_then(version_in_path),
+                update_pending: false,
+                installed_version: None,
             })
         })
         .collect();
     servers.sort_by(|a, b| a.folder.cmp(&b.folder));
     servers
+}
+
+/// Pure: the version a native Claude Code install's program is,
+/// `…/claude/versions/<version>`. None for any other program.
+pub fn version_in_path(program: &Path) -> Option<String> {
+    let parent = program.parent()?.file_name()?;
+    let version = program.file_name()?.to_str()?;
+    (parent == "versions" && version.starts_with(|c: char| c.is_ascii_digit()))
+        .then(|| version.to_owned())
+}
+
+/// Mark the servers running an older Claude Code than `installed`.
+pub fn mark_updates(servers: &mut [RcServer], installed: &str) {
+    for server in servers {
+        server.update_pending = server
+            .claude_version
+            .as_deref()
+            .is_some_and(|running| crate::sessions::newer_version(installed, running));
+        server.installed_version = server.update_pending.then(|| installed.to_owned());
+    }
 }
 
 /// What a server's window is waiting for someone to answer, if anything.
@@ -337,6 +362,9 @@ pub fn start(tmux: &Tmux, start: &Start) -> Result<StartRcServerResult, ApiError
                     text: last_lines(&last_screen, 6),
                 })
             }),
+            claude_version: None,
+            update_pending: false,
+            installed_version: None,
         });
     Ok(StartRcServerResult {
         attach_command: Some(tmux.attach_command(&launched.window)),
@@ -420,6 +448,44 @@ mod tests {
 
     fn argv(line: &str) -> Vec<String> {
         line.split(' ').map(str::to_owned).collect()
+    }
+
+    #[test]
+    fn reads_the_version_off_a_native_install_program() {
+        let version = |path: &str| version_in_path(Path::new(path));
+        assert_eq!(
+            version("/home/m/.local/share/claude/versions/2.1.293").as_deref(),
+            Some("2.1.293")
+        );
+        assert_eq!(version("/usr/bin/node"), None);
+        assert_eq!(version("/x/versions/latest"), None);
+    }
+
+    #[test]
+    fn marks_servers_on_an_older_version() {
+        let server = |version: Option<&str>| RcServer {
+            pid: 1,
+            folder: "/w".into(),
+            name: None,
+            spawn: "same-dir".into(),
+            sessions: 0,
+            window: None,
+            environment_url: None,
+            attention: None,
+            claude_version: version.map(str::to_owned),
+            update_pending: false,
+            installed_version: None,
+        };
+        let mut servers = [
+            server(Some("2.1.293")),
+            server(Some("2.1.300")),
+            server(None),
+        ];
+        mark_updates(&mut servers, "2.1.300");
+        assert!(servers[0].update_pending);
+        assert_eq!(servers[0].installed_version.as_deref(), Some("2.1.300"));
+        assert!(!servers[1].update_pending && servers[1].installed_version.is_none());
+        assert!(!servers[2].update_pending);
     }
 
     #[test]

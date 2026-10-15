@@ -73,6 +73,11 @@ export type RcServer = {
   window: TmuxWindow | null
   environmentUrl: string | null
   attention: { kind: AttentionKind; text: string } | null
+  /** The Claude Code it runs, when the server can tell (0.11+). */
+  claudeVersion?: string | null
+  /** A newer Claude Code is installed: restarting the server runs it. */
+  updatePending?: boolean
+  installedVersion?: string | null
 }
 
 export type StartRcServerResult = { server: RcServer; alreadyRunning: boolean; attachCommand: string | null }
@@ -297,6 +302,18 @@ export type ConductorConfirmAction =
   | { kind: 'deleteAccount'; hostId: string; account: string }
   | { kind: 'removeHost'; hostId: string }
   | { kind: 'stopServer'; hostId: string; account: string; pid: number; folder: string; sessions: number }
+  | {
+      kind: 'restartServer'
+      hostId: string
+      account: string
+      pid: number
+      folder: string
+      name: string | null
+      spawn: string
+      sessions: number
+      /** `2.1.293 → 2.1.300` */
+      versions: string
+    }
 
 declare module 'claude-code' {
   interface PluginState {

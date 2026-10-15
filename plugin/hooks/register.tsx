@@ -494,6 +494,18 @@ async function confirmDialog($: Engine, action: ConductorConfirmAction): Promise
         confirmLabel: 'Stop',
         isDanger: true,
       }
+    case 'restartServer':
+      return {
+        ...base,
+        title: 'Restart this Remote Control server to update?',
+        body: `${action.folder}\n\nClaude Code ${action.versions}.${
+          action.sessions
+            ? ` The ${count(action.sessions, 'session')} it serves stop answering for a moment and come back with it.`
+            : ''
+        }`,
+        confirmLabel: 'Restart',
+        isDanger: false,
+      }
     case 'stop': {
       const session = host?.accounts
         .find((a) => a.account.name === action.target.account)
@@ -569,6 +581,21 @@ async function runConfirmed($: Engine, action: ConductorConfirmAction): Promise<
     case 'stopServer': {
       await callHost($, action.hostId, 'POST', `/v1/accounts/${enc(action.account)}/rc-servers/${action.pid}/stop`, {})
       return { tone: 'success', text: 'Stopped the Remote Control server', detail: action.folder }
+    }
+    case 'restartServer': {
+      const base = `/v1/accounts/${enc(action.account)}/rc-servers`
+      await callHost($, action.hostId, 'POST', `${base}/${action.pid}/stop`, {})
+      const started = (await callHost(
+        $,
+        action.hostId,
+        'POST',
+        base,
+        { folder: action.folder, ...(action.name ? { name: action.name } : {}), spawn: action.spawn, trustFolder: false },
+        45,
+      )) as StartRcServerResult
+      return started.server.attention
+        ? { tone: 'info', text: 'Restarted; the server is waiting for you in its window', detail: started.server.attention.text }
+        : { tone: 'success', text: `Restarted on Claude Code ${action.versions.split(' → ')[1] ?? ''}`.trim(), detail: action.folder }
     }
     case 'stop': {
       const t = action.target

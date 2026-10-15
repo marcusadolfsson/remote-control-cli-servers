@@ -561,6 +561,25 @@ function serverMenu(host: ConductorHost, account: string, server: RcServer, act:
           run: () => act.openEnvironment(host.id, server.environmentUrl ?? ''),
         }
       : null,
+    server.window && server.updatePending
+      ? {
+          value: 'restart',
+          label: `Restart to update (${updateVersions(server)})…`,
+          hotkey: 'u',
+          run: () =>
+            act.confirm({
+              kind: 'restartServer',
+              hostId: host.id,
+              account,
+              pid: server.pid,
+              folder: server.folder,
+              name: server.name,
+              spawn: server.spawn,
+              sessions: server.sessions,
+              versions: updateVersions(server) ?? '',
+            }),
+        }
+      : null,
     server.window
       ? {
           value: 'stop',
@@ -612,6 +631,7 @@ function ServerRow(ui: Ui, host: ConductorHost, account: string, server: RcServe
       </Box>
       <Box gap={1} flexShrink={0} alignItems="center">
         {server.attention && <Text color="warning">Waiting for you</Text>}
+        {server.updatePending && Icon(ui, 'update', 'claude')}
         {items.length > 0 && Menu(ui, `rm-${server.pid}`, items, model, act)}
       </Box>
     </Box>
