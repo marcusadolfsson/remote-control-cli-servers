@@ -298,6 +298,7 @@ export type ConductorConfirmAction =
   | { kind: 'archive'; target: ConductorTarget }
   | { kind: 'deleteArchive'; hostId: string; account: string; id: string; archive: string; title: string }
   | { kind: 'restartAll'; hostId: string; account: string }
+  | { kind: 'restartServers'; hostId: string; account: string }
   | { kind: 'signOut'; hostId: string; account: string; running: number }
   | { kind: 'deleteAccount'; hostId: string; account: string }
   | { kind: 'removeHost'; hostId: string }

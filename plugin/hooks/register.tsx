@@ -548,6 +548,18 @@ async function confirmDialog($: Engine, action: ConductorConfirmAction): Promise
         isDanger: false,
       }
     }
+    case 'restartServers': {
+      const servers = (host?.accounts.find((a) => a.account.name === action.account)?.servers ?? []).filter(
+        (server) => server.window,
+      )
+      return {
+        ...base,
+        title: `Restart ${count(servers.length, 'Remote Control server')}?`,
+        body: `On ${label}, in ${action.account}. Each one starts again on the Claude Code installed now, one after another. The sessions they serve stop answering for a moment and come back with them.`,
+        confirmLabel: 'Restart all',
+        isDanger: false,
+      }
+    }
     case 'signOut':
       return {
         ...base,
@@ -575,6 +587,29 @@ async function confirmDialog($: Engine, action: ConductorConfirmAction): Promise
   }
 }
 
+/**
+ * Stop a Remote Control server and start it again in its folder, with its
+ * name and spawn mode, on the Claude Code installed now. The sessions it
+ * serves come back with it.
+ */
+async function restartRcServer(
+  $: Engine,
+  hostId: string,
+  account: string,
+  server: { pid: number; folder: string; name: string | null; spawn: string },
+): Promise<StartRcServerResult> {
+  const base = `/v1/accounts/${enc(account)}/rc-servers`
+  await callHost($, hostId, 'POST', `${base}/${server.pid}/stop`, {})
+  return (await callHost(
+    $,
+    hostId,
+    'POST',
+    base,
+    { folder: server.folder, ...(server.name ? { name: server.name } : {}), spawn: server.spawn, trustFolder: false },
+    45,
+  )) as StartRcServerResult
+}
+
 /** Does what a confirm dialog confirmed; the note to show after. */
 async function runConfirmed($: Engine, action: ConductorConfirmAction): Promise<ConductorNote> {
   switch (action.kind) {
@@ -583,19 +618,26 @@ async function runConfirmed($: Engine, action: ConductorConfirmAction): Promise<
       return { tone: 'success', text: 'Stopped the Remote Control server', detail: action.folder }
     }
     case 'restartServer': {
-      const base = `/v1/accounts/${enc(action.account)}/rc-servers`
-      await callHost($, action.hostId, 'POST', `${base}/${action.pid}/stop`, {})
-      const started = (await callHost(
-        $,
-        action.hostId,
-        'POST',
-        base,
-        { folder: action.folder, ...(action.name ? { name: action.name } : {}), spawn: action.spawn, trustFolder: false },
-        45,
-      )) as StartRcServerResult
+      const started = await restartRcServer($, action.hostId, action.account, action)
       return started.server.attention
         ? { tone: 'info', text: 'Restarted; the server is waiting for you in its window', detail: started.server.attention.text }
         : { tone: 'success', text: `Restarted on Claude Code ${action.versions.split(' → ')[1] ?? ''}`.trim(), detail: action.folder }
+    }
+    case 'restartServers': {
+      const current = await read($, view)
+      const host = current.hosts.find((known) => known.id === action.hostId)
+      const servers = (host?.accounts.find((a) => a.account.name === action.account)?.servers ?? []).filter(
+        (server) => server.window,
+      )
+      const failed: Array<string> = []
+      for (const server of servers) {
+        await restartRcServer($, action.hostId, action.account, server).catch((err) =>
+          failed.push(`${server.folder}: ${errorText(err)}`),
+        )
+      }
+      return failed.length
+        ? { tone: 'error', text: `Restarted ${servers.length - failed.length} of ${servers.length}.`, detail: failed.join('\n') }
+        : { tone: 'success', text: `Restarted ${count(servers.length, 'Remote Control server')} on ${host?.label ?? 'the host'}` }
     }
     case 'stop': {
       const t = action.target

@@ -315,6 +315,16 @@ function HostSection(ui: Ui, host: ConductorHost, model: OverviewModel, act: Act
   )
 }
 
+/** How many of a profile's servers this side started, so can restart. */
+function restartableServers(a: ConductorAccount): number {
+  return (a.servers ?? []).filter((server) => server.window).length
+}
+
+/** How many of those run an older Claude Code than the host has now. */
+function serversOutdated(a: ConductorAccount): number {
+  return (a.servers ?? []).filter((server) => server.window && server.updatePending).length
+}
+
 function accountMenu(host: ConductorHost, a: ConductorAccount, model: OverviewModel, act: Act): Array<MenuItem> {
   const name = a.account.name
   const running = a.sessions.filter((s) => s.running).length
@@ -339,6 +349,14 @@ function accountMenu(host: ConductorHost, a: ConductorAccount, model: OverviewMo
           hotkey: 't',
           label: outdated ? `Restart all (${outdated} to update)…` : 'Restart all…',
           run: () => act.confirm({ kind: 'restartAll', hostId: host.id, account: name }),
+        }
+      : null,
+    restartableServers(a) > 1 || (a.servers ?? []).some((server) => server.window && server.updatePending)
+      ? {
+          value: 'restartServers',
+          hotkey: 'v',
+          label: serversOutdated(a) ? `Restart all servers (${serversOutdated(a)} to update)…` : 'Restart all servers…',
+          run: () => act.confirm({ kind: 'restartServers', hostId: host.id, account: name }),
         }
       : null,
     {
@@ -366,7 +384,9 @@ function accountMenu(host: ConductorHost, a: ConductorAccount, model: OverviewMo
         },
   ]
   // A shared Mac offers only its servers.
-  const offered = isMacHost(host.info) ? items.filter((item) => item?.value === 'server') : items
+  const offered = isMacHost(host.info)
+    ? items.filter((item) => item?.value === 'server' || item?.value === 'restartServers')
+    : items
   return offered.filter((item): item is MenuItem => item !== null)
 }
 
