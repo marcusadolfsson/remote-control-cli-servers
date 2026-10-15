@@ -7,8 +7,9 @@
 //! 3. Profiles: the accounts in `accounts_base`, and whether `~/.claude`
 //!    shows as `default`.
 //! 4. Network: what the Mac can reach the server over (Tailscale, WireGuard),
-//!    and whether to accept a LAN as well.
-//! 5. The systemd user service, lingering so it runs while logged out.
+//!    and whether to accept a LAN as well. A Mac serving itself skips it.
+//! 5. The service: systemd's, lingering so it runs while logged out, or on
+//!    a Mac a launchd agent.
 //! 6. Pairing: a code to paste into `/remote-control-cli-servers pair`, then waiting for the Mac.
 //!
 //! What it changes: `config.toml` (only the keys it asks about, keeping the
@@ -116,6 +117,51 @@ pub fn run(paths: &Paths) -> io::Result<()> {
 
     step(4, "Network");
     let config = Config::load(paths)?;
+    if config.listen.ip().is_loopback() {
+        ok(&format!(
+            "listening on {} only: this machine pairs with itself",
+            config.listen
+        ));
+    } else {
+        network(paths, &config)?;
+    }
+
+    step(5, "Service");
+    let config = Config::load(paths)?;
+    let unit = service::installed_path(&config.home);
+    let running = service::running();
+    let question = if running {
+        "  The service is running. Reinstall and restart it (picks up this binary)?"
+    } else if unit.exists() {
+        "  The service is installed but not running. Start it?"
+    } else {
+        "  Install the service, so the server starts at login and restarts if it stops?"
+    };
+    if ask(question, !running)? {
+        service::install(&config.home, true)?;
+        ok(&format!("installed {} and started", unit.display()));
+    }
+    if service::running() {
+        ok(&format!("running, listening on {}", config.listen));
+    } else {
+        missing(&format!(
+            "not running. Its log: {}",
+            service::logs_hint(&config.home)
+        ));
+    }
+    if cfg!(not(target_os = "macos")) {
+        linger()?;
+    }
+
+    pair(paths, &config)?;
+    println!(
+        "\nDone. `remote-control-conductor-server doctor` checks all of this again at any time."
+    );
+    Ok(())
+}
+
+/// Step 4 on a host others reach: Tailscale, WireGuard, and any LAN to accept.
+fn network(paths: &Paths, config: &Config) -> io::Result<()> {
     let tailscale: Vec<String> = hostinfo::reachable_hosts()
         .into_iter()
         .filter(|host| {
@@ -181,28 +227,11 @@ pub fn run(paths: &Paths) -> io::Result<()> {
         missing("No Tailscale, WireGuard or LAN found: only this machine can reach the server. Install Tailscale, or add a network to allow_from.");
     }
 
-    step(5, "Service");
-    let unit = service::unit_path(&config.home);
-    let running = systemctl_ok(&["is-active", "--quiet", service::UNIT_NAME]);
-    let question = if running {
-        "  The service is running. Reinstall and restart it (picks up this binary)?"
-    } else if unit.exists() {
-        "  The service is installed but not running. Start it?"
-    } else {
-        "  Install the service, so the server starts at login and restarts if it stops?"
-    };
-    if ask(question, !running)? {
-        service::install(&config.home, true)?;
-        ok(&format!("installed {} and started", unit.display()));
-    }
-    if systemctl_ok(&["is-active", "--quiet", service::UNIT_NAME]) {
-        ok(&format!("running, listening on {}", config.listen));
-    } else {
-        missing(&format!(
-            "not running. Its log: journalctl --user -u {} -e",
-            service::UNIT_NAME
-        ));
-    }
+    Ok(())
+}
+
+/// Lingering, so a Linux host's service outlives a logout.
+fn linger() -> io::Result<()> {
     match service::lingering() {
         Some(true) => ok("keeps running while you're logged out (lingering on)"),
         Some(false) => {
@@ -225,7 +254,11 @@ pub fn run(paths: &Paths) -> io::Result<()> {
         }
         None => println!("  Couldn't tell whether lingering is on (no loginctl)."),
     }
+    Ok(())
+}
 
+/// Step 6: a pairing code, then waiting for the Mac to use it.
+fn pair(paths: &Paths, config: &Config) -> io::Result<()> {
     step(6, "Pair a Mac");
     let store = Store::new(paths.ensure_state_dir()?);
     let before = store.clients()?.len();
@@ -233,7 +266,7 @@ pub fn run(paths: &Paths) -> io::Result<()> {
         ok(&format!("{before} paired already"));
     }
     if ask("  Pair a Mac now?", before == 0)? {
-        let issued = pairing_code::issue(&config, paths, None, Vec::new())?;
+        let issued = pairing_code::issue(config, paths, None, Vec::new())?;
         println!(
             "\n  In Claude Code on your Mac, run /remote-control-cli-servers pair and paste:\n"
         );
@@ -265,9 +298,6 @@ pub fn run(paths: &Paths) -> io::Result<()> {
             thread::sleep(Duration::from_secs(1));
         }
     }
-    println!(
-        "\nDone. `remote-control-conductor-server doctor` checks all of this again at any time."
-    );
     Ok(())
 }
 
@@ -311,14 +341,6 @@ fn wait_to_check_again() -> io::Result<()> {
         return Err(io::Error::other("setup stopped"));
     }
     Ok(())
-}
-
-fn systemctl_ok(args: &[&str]) -> bool {
-    Command::new("systemctl")
-        .arg("--user")
-        .args(args)
-        .status()
-        .is_ok_and(|status| status.success())
 }
 
 /// Pure: whether `tmux -V`'s answer (`tmux 3.0a`, `tmux next-3.4`) is 3.0

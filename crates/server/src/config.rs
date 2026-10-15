@@ -25,6 +25,15 @@ pub const APP_DIR: &str = "remote-control-conductor-server";
 pub const LEGACY_APP_DIR: &str = "ai-profiles-server";
 pub const DEFAULT_PORT: u16 = 7443;
 
+/// Where the server listens unless `listen` says otherwise: every address on
+/// a Linux host, which the Mac reaches over the tailnet; on a Mac, which only
+/// serves itself, this machine alone.
+pub const DEFAULT_LISTEN: &str = if cfg!(target_os = "macos") {
+    "127.0.0.1:7443"
+} else {
+    "0.0.0.0:7443"
+};
+
 #[derive(Debug, Clone)]
 pub struct Paths {
     pub config_dir: PathBuf,
@@ -179,7 +188,7 @@ impl Config {
         let listen = file
             .listen
             .as_deref()
-            .unwrap_or("0.0.0.0:7443")
+            .unwrap_or(DEFAULT_LISTEN)
             .parse()
             .map_err(|_| io::Error::other("config.toml: `listen` must be an address:port"))?;
         let accounts_base = file
@@ -308,6 +317,7 @@ mod tests {
     fn defaults_to_tailscale_only_on_port_7443() {
         let config = Config::from_toml("", Path::new("/home/m")).unwrap();
         assert_eq!(config.listen.port(), DEFAULT_PORT);
+        assert_eq!(config.listen.ip().is_loopback(), cfg!(target_os = "macos"));
         assert_eq!(config.tmux_session, "ai");
         assert_eq!(config.folder_roots, vec![PathBuf::from("/home/m")]);
         assert!(!config.include_default);
@@ -350,7 +360,7 @@ mod tests {
     #[test]
     fn refuses_settings_that_would_be_unsafe_or_break_tmux() {
         let home = Path::new("/home/m");
-        assert!(Config::from_toml("allow_from = []", home).is_err());
+        assert!(Config::from_toml("listen = \"0.0.0.0:1\"\nallow_from = []", home).is_err());
         assert!(Config::from_toml("listen = \"127.0.0.1:1\"\nallow_from = []", home).is_ok());
         assert!(Config::from_toml("tmux_session = \"a:b\"", home).is_err());
         assert!(Config::from_toml("unknown = 1", home).is_err());

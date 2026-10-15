@@ -1,7 +1,7 @@
 name: Release
 
 # Push a tag `v<version>` (the workspace's and the plugin's version) to build
-# the server for Linux and publish a release with it. The plugin installs from
+# the server for Linux and macOS and publish a release with it. The plugin installs from
 # the repository itself, through its marketplace.
 on:
   push:
@@ -11,45 +11,51 @@ permissions:
   contents: write
 
 jobs:
-  # Statically linked (musl), so it runs on any distribution; built natively
-  # on each architecture.
+  # Linux: statically linked (musl), so it runs on any distribution. Each
+  # built natively, named for what `uname -m` says there.
   server:
     strategy:
       matrix:
         include:
-          - arch: x86_64
+          - name: x86_64-linux
+            target: x86_64-unknown-linux-musl
             runner: ubuntu-latest
-          - arch: aarch64
+          - name: aarch64-linux
+            target: aarch64-unknown-linux-musl
             runner: ubuntu-24.04-arm
+          - name: arm64-macos
+            target: aarch64-apple-darwin
+            runner: macos-latest
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
 
       - uses: dtolnay/rust-toolchain@stable
         with:
-          targets: '${{ matrix.arch }}-unknown-linux-musl'
+          targets: ${{ matrix.target }}
 
       - uses: swatinem/rust-cache@v2
         with:
-          key: server-${{ matrix.arch }}
+          key: server-${{ matrix.name }}
 
       # ring compiles C with musl-gcc for the musl target.
       - name: Install musl
+        if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y musl-tools
 
       - name: Build
-        run: cargo build --release --locked -p remote-control-conductor-server --target ${{ matrix.arch }}-unknown-linux-musl
+        run: cargo build --release --locked -p remote-control-conductor-server --target ${{ matrix.target }}
 
       - name: Package
         run: |
-          out=remote-control-conductor-server-${{ matrix.arch }}-linux
-          cp target/${{ matrix.arch }}-unknown-linux-musl/release/remote-control-conductor-server "$out"
+          out=remote-control-conductor-server-${{ matrix.name }}
+          cp target/${{ matrix.target }}/release/remote-control-conductor-server "$out"
           "./$out" --version
-          sha256sum "$out" > "$out.sha256"
+          shasum -a 256 "$out" > "$out.sha256"
 
       - uses: actions/upload-artifact@v4
         with:
-          name: server-${{ matrix.arch }}
+          name: server-${{ matrix.name }}
           path: remote-control-conductor-server-*
 
   # One release with both servers, never one without all its files.
@@ -76,6 +82,8 @@ jobs:
           mkdir -p ~/.local/bin && curl -fsSL https://github.com/marcusadolfsson/remote-control-cli-servers/releases/latest/download/remote-control-conductor-server-$(uname -m)-linux -o ~/.local/bin/remote-control-conductor-server && chmod +x ~/.local/bin/remote-control-conductor-server
           remote-control-conductor-server setup
           ```
+
+          **This Mac** (Apple silicon): the macOS server, set up by the Remote Control Conductor app, or by hand the same way with `remote-control-conductor-server-arm64-macos` and `brew install tmux` first.
 
           Each server binary has a `.sha256` beside it.
           NOTES

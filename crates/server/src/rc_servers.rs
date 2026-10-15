@@ -15,8 +15,7 @@
 //! anything; Remote Control's own one-time "Enable Remote Control? (y/n)" is
 //! always left for someone to answer in the window.
 
-use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::Command;
 use std::thread;
 use std::time::{Duration, Instant};
@@ -26,6 +25,7 @@ use conductor_core::registry::RegistryEntry;
 
 use crate::accounts::AccountDir;
 use crate::error::ApiError;
+use crate::process_info;
 use crate::tmux::Tmux;
 
 /// The window tag naming the server's pid.
@@ -135,61 +135,6 @@ pub fn read_screen(screen: &str) -> Screen {
     Screen::Starting
 }
 
-/// One process: its pid, its parent's, its argv.
-struct Process {
-    pid: i32,
-    ppid: i32,
-    argv: Vec<String>,
-}
-
-/// Every process this user can see, from `/proc`. Empty where there's no
-/// `/proc` (a Mac running the tests).
-fn processes() -> Vec<Process> {
-    let Ok(entries) = fs::read_dir("/proc") else {
-        return Vec::new();
-    };
-    entries
-        .filter_map(Result::ok)
-        .filter_map(|entry| entry.file_name().to_str()?.parse::<i32>().ok())
-        .filter_map(|pid| {
-            let cmdline = fs::read(format!("/proc/{pid}/cmdline")).ok()?;
-            let stat = fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
-            Some(Process {
-                pid,
-                ppid: parent_pid(&stat)?,
-                argv: cmdline
-                    .split(|byte| *byte == 0)
-                    .filter(|arg| !arg.is_empty())
-                    .map(|arg| String::from_utf8_lossy(arg).into_owned())
-                    .collect(),
-            })
-        })
-        .collect()
-}
-
-/// Pure: the parent pid in `/proc/<pid>/stat`, after the command name (which
-/// may hold spaces and parentheses, so it's read from the last `)`).
-fn parent_pid(stat: &str) -> Option<i32> {
-    stat[stat.rfind(')')? + 1..]
-        .split_whitespace()
-        .nth(1)?
-        .parse()
-        .ok()
-}
-
-fn environment_var(pid: i32, name: &str) -> Option<String> {
-    let environ = fs::read(format!("/proc/{pid}/environ")).ok()?;
-    let prefix = format!("{name}=");
-    environ
-        .split(|byte| *byte == 0)
-        .map(String::from_utf8_lossy)
-        .find_map(|pair| pair.strip_prefix(&prefix).map(str::to_owned))
-}
-
-fn working_dir(pid: i32) -> Option<PathBuf> {
-    fs::read_link(format!("/proc/{pid}/cwd")).ok()
-}
-
 fn same_dir(a: &Path, b: &Path) -> bool {
     match (a.canonicalize(), b.canonicalize()) {
         (Ok(a), Ok(b)) => a == b,
@@ -200,7 +145,7 @@ fn same_dir(a: &Path, b: &Path) -> bool {
 /// Whether process `pid` runs as `account`: its `CLAUDE_CONFIG_DIR` is the
 /// account's, or, for the stock install, it has none.
 fn runs_as(pid: i32, account: &AccountDir) -> bool {
-    match environment_var(pid, "CLAUDE_CONFIG_DIR") {
+    match process_info::environment_var(pid, "CLAUDE_CONFIG_DIR") {
         Some(dir) if !dir.is_empty() => same_dir(Path::new(&dir), &account.dir),
         _ => account.is_default,
     }
@@ -208,7 +153,7 @@ fn runs_as(pid: i32, account: &AccountDir) -> bool {
 
 /// `account`'s Remote Control servers, by folder.
 pub fn list(tmux: &Tmux, account: &AccountDir) -> Vec<RcServer> {
-    let all = processes();
+    let all = process_info::all();
     let ours: std::collections::HashMap<i32, TmuxWindow> = tmux
         .tagged(TAG)
         .into_iter()
@@ -219,7 +164,7 @@ pub fn list(tmux: &Tmux, account: &AccountDir) -> Vec<RcServer> {
         .filter_map(|process| Some((process, parse_command(&process.argv)?)))
         .filter(|(process, _)| runs_as(process.pid, account))
         .filter_map(|(process, flags)| {
-            let folder = working_dir(process.pid)?;
+            let folder = process_info::working_dir(process.pid)?;
             let sessions = all
                 .iter()
                 .filter(|child| child.ppid == process.pid)
@@ -439,14 +384,7 @@ pub fn stop(tmux: &Tmux, account: &AccountDir, pid: i32) -> Result<bool, ApiErro
 
 /// Whether `pid` is still a `claude remote-control`.
 fn is_server(pid: i32) -> bool {
-    fs::read(format!("/proc/{pid}/cmdline")).is_ok_and(|cmdline| {
-        let argv: Vec<String> = cmdline
-            .split(|byte| *byte == 0)
-            .filter(|arg| !arg.is_empty())
-            .map(|arg| String::from_utf8_lossy(arg).into_owned())
-            .collect();
-        parse_command(&argv).is_some()
-    })
+    process_info::argv(pid).is_some_and(|argv| parse_command(&argv).is_some())
 }
 
 fn last_lines(screen: &str, count: usize) -> String {
@@ -475,6 +413,7 @@ fn exited(last_screen: &str) -> ApiError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
 
     fn argv(line: &str) -> Vec<String> {
         line.split(' ').map(str::to_owned).collect()
@@ -516,15 +455,6 @@ mod tests {
         );
         assert_eq!(parse_command(&argv("claude --remote-control Deploy")), None);
         assert_eq!(parse_command(&argv("/usr/bin/vim remote-control")), None);
-    }
-
-    #[test]
-    fn reads_the_parent_pid_past_a_name_with_spaces() {
-        assert_eq!(
-            parent_pid("1584921 (claude (x) y) S 1584606 1584921 1"),
-            Some(1584606)
-        );
-        assert_eq!(parent_pid("12 (bash) R 1 12 12"), Some(1));
     }
 
     const TRUST: &str = "Remote Control starts Claude Code sessions in this folder, driven from your other devices:

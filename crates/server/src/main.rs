@@ -41,7 +41,7 @@ enum Command {
     Clients,
     /// Stop a client's access, by id or name.
     Revoke { client: String },
-    /// Install and start a systemd user service running `serve`.
+    /// Install and start a user service running `serve`: systemd on Linux, launchd on macOS.
     InstallService {
         /// Write and enable the unit, but don't start it now.
         #[arg(long)]
@@ -158,10 +158,7 @@ fn run(cli: Cli) -> io::Result<()> {
             let unit = service::install(&config.home, !no_start)?;
             println!("Installed {}.", unit.display());
             if !no_start {
-                println!(
-                    "Started. Logs: journalctl --user -u {} -f",
-                    service::UNIT_NAME
-                );
+                println!("Started. Logs: {}", service::logs_hint(&config.home));
             }
             if service::lingering() == Some(false) {
                 println!(

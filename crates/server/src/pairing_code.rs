@@ -32,10 +32,14 @@ pub fn issue(
     let state_dir = paths.ensure_state_dir()?;
     let identity = Identity::load_or_create(state_dir)?;
     let port = config.listen.port();
-    let hosts: Vec<String> = if hosts.is_empty() {
-        hostinfo::reachable_hosts()
-    } else {
+    let hosts: Vec<String> = if !hosts.is_empty() {
         hosts
+    } else if config.listen.ip().is_loopback() {
+        // Listening on this machine alone (a Mac serving itself): that's
+        // the only address that can reach it.
+        vec![config.listen.ip().to_string()]
+    } else {
+        hostinfo::reachable_hosts()
     }
     .into_iter()
     .map(|host| hostinfo::with_port(&host, port))

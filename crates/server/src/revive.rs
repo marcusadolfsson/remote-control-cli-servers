@@ -60,10 +60,32 @@ fn path(state: &ServerState) -> PathBuf {
     state.state_dir.join(FILE)
 }
 
+#[cfg(not(target_os = "macos"))]
 fn boot_id() -> Option<String> {
     fs::read_to_string("/proc/sys/kernel/random/boot_id")
         .ok()
         .map(|id| id.trim().to_owned())
+}
+
+/// macOS has no boot id: the time it booted stands in for one.
+#[cfg(target_os = "macos")]
+fn boot_id() -> Option<String> {
+    let output = std::process::Command::new("/usr/sbin/sysctl")
+        .args(["-n", "kern.boottime"])
+        .output()
+        .ok()?;
+    boot_time_id(&String::from_utf8_lossy(&output.stdout))
+}
+
+/// Pure: an id for this boot from `sysctl -n kern.boottime`
+/// (`{ sec = 1790815661, usec = 859375 } Wed Sep 30 20:47:41 2026`).
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+fn boot_time_id(boottime: &str) -> Option<String> {
+    let rest = &boottime[boottime.find("sec = ")? + "sec = ".len()..];
+    let seconds: u64 = rest[..rest.find(|c: char| !c.is_ascii_digit())?]
+        .parse()
+        .ok()?;
+    Some(format!("boottime-{seconds}"))
 }
 
 /// Write down the sessions running in tmux now, in every account.
@@ -342,5 +364,15 @@ mod tests {
             "only the server restarted"
         );
         assert!(!gone(None, None, true), "no boot id to compare, tmux fine");
+    }
+
+    #[test]
+    fn a_macs_boot_time_stands_in_for_a_boot_id() {
+        assert_eq!(
+            boot_time_id("{ sec = 1790815661, usec = 859375 } Wed Sep 30 20:47:41 2026\n"),
+            Some("boottime-1790815661".to_owned())
+        );
+        assert_eq!(boot_time_id(""), None);
+        assert_eq!(boot_time_id("{ sec = , usec = 1 }"), None);
     }
 }

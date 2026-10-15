@@ -19,6 +19,7 @@ pub mod login;
 pub mod memory;
 pub mod moves;
 pub mod pairing_code;
+pub mod process_info;
 pub mod procs;
 pub mod rc_servers;
 pub mod rename;

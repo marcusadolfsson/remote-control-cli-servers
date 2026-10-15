@@ -11,7 +11,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use conductor_core::api::{
-    ErrorBody, HostInfo, HostSettings, LaunchResult, RemoteSession, WindowScreen,
+    ErrorBody, HostInfo, HostSettings, LaunchResult, RcServer, RemoteSession, StartRcServerResult,
+    WindowScreen,
 };
 use conductor_core::tls::pinned_client_config;
 use conductor_server::certs::Identity;
@@ -261,12 +262,12 @@ async fn start() -> Box {
     }
 }
 
+/// A different number for each test in this process. Not the clock: macOS
+/// counts only microseconds, so its nanoseconds modulo 1000 are always 0 and
+/// every test would share one tmux server.
 fn rand_suffix() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .subsec_nanos() as u64
-        % 1000
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed) % 1000
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -909,4 +910,114 @@ async fn a_just_resumed_session_is_connecting_though_it_replays_an_old_disconnec
         session.remote_control_connecting,
         "the disconnect it shows is history"
     );
+}
+
+/// Acts out `claude remote-control`: a compiled program, since a script would
+/// show its interpreter (`/bin/bash`) as the process, where the real one is
+/// `claude` itself. It serves one session (a child whose arguments carry
+/// `--sdk-url`), shows itself connected, and ends at Ctrl+C.
+const FAKE_RC_SERVER: &str = r#"
+#include <signal.h>
+#include <stdio.h>
+#include <string.h>
+#include <unistd.h>
+
+int main(int argc, char **argv) {
+    if (argc < 2 || strcmp(argv[1], "remote-control") != 0) return 2;
+    if (fork() == 0) {
+        execl("/bin/sh", "sh", "-c", "sleep 600; :", "session", "--sdk-url", "wss://test", (char *)0);
+        _exit(1);
+    }
+    printf("Remote Control\n\n  Connected  https://claude.ai/code?environment=env_test\n");
+    fflush(stdout);
+    signal(SIGINT, SIG_DFL);
+    for (;;) pause();
+}
+"#;
+
+/// The fake server, compiled over the fake `claude`; `false` where there's
+/// no C compiler.
+fn compile_fake_rc_server(root: &Path) -> bool {
+    let source = root.join("fake-rc.c");
+    write(&source, FAKE_RC_SERVER);
+    Command::new("cc")
+        .arg("-o")
+        .arg(root.join("bin/claude"))
+        .arg(&source)
+        .output()
+        .is_ok_and(|output| output.status.success())
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn finds_a_remote_control_server_in_the_process_table_and_stops_it() {
+    if !tmux_installed() {
+        eprintln!("skipped: tmux isn't installed");
+        return;
+    }
+    let server = start().await;
+    if !compile_fake_rc_server(&server.root) {
+        eprintln!("skipped: no C compiler");
+        return;
+    }
+    let folder = server.root.join("code");
+    let response = server
+        .post(
+            "/v1/accounts/work/rc-servers",
+            serde_json::json!({"folder": folder.display().to_string(), "name": "Docs (test)"}),
+        )
+        .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let started: StartRcServerResult = response.json().await.unwrap();
+    assert!(!started.already_running);
+    let pid = started.server.pid;
+    assert!(started.server.window.is_some(), "started in a window here");
+
+    // Its child, the session it serves, may take a moment to appear.
+    let mut listed = Vec::new();
+    for _ in 0..40 {
+        listed = server
+            .get("/v1/accounts/work/rc-servers")
+            .await
+            .json::<Vec<RcServer>>()
+            .await
+            .unwrap();
+        if listed.first().is_some_and(|found| found.sessions == 1) {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(250)).await;
+    }
+    assert_eq!(listed.len(), 1, "found in the process table: {listed:?}");
+    let found = &listed[0];
+    assert_eq!(found.pid, pid);
+    assert_eq!(
+        found.folder,
+        folder.display().to_string(),
+        "its working folder"
+    );
+    assert_eq!(
+        found.name.as_deref(),
+        Some("Docs (test)"),
+        "its argv, spaces kept"
+    );
+    assert_eq!(found.spawn, "same-dir");
+    assert_eq!(found.sessions, 1, "its child with --sdk-url");
+    assert_eq!(
+        found.environment_url.as_deref(),
+        Some("https://claude.ai/code?environment=env_test")
+    );
+
+    let stopped = server
+        .post(
+            &format!("/v1/accounts/work/rc-servers/{pid}/stop"),
+            serde_json::json!({}),
+        )
+        .await;
+    assert_eq!(stopped.status(), StatusCode::OK);
+    let after: Vec<RcServer> = server
+        .get("/v1/accounts/work/rc-servers")
+        .await
+        .json()
+        .await
+        .unwrap();
+    assert!(after.is_empty(), "stopped: {after:?}");
 }

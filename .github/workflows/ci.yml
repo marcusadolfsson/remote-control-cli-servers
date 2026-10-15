@@ -6,8 +6,8 @@ on:
   pull_request:
 
 jobs:
-  # The server runs on Linux, where it reads /proc and drives tmux: checked
-  # there, with a real tmux for the launch tests.
+  # The server runs on Linux hosts, where it reads /proc and drives tmux:
+  # checked there, with a real tmux for the launch tests.
   server:
     runs-on: ubuntu-latest
     steps:
@@ -24,6 +24,28 @@ jobs:
 
       - name: cargo fmt
         run: cargo fmt --all --check
+
+      - name: cargo clippy
+        run: cargo clippy --locked --workspace --all-targets -- -D warnings
+
+      - name: cargo test
+        run: cargo test --locked --workspace
+
+  # On a Mac it reads the process table through the kernel's own calls and
+  # runs as a launchd agent: checked there too, with Homebrew's tmux.
+  server-macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - uses: swatinem/rust-cache@v2
+
+      - name: Install tmux
+        run: brew install tmux
 
       - name: cargo clippy
         run: cargo clippy --locked --workspace --all-targets -- -D warnings
