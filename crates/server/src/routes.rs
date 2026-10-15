@@ -358,6 +358,7 @@ fn describe(state: &ServerState, account: accounts::AccountDir) -> RemoteAccount
         pending_resume: crate::revive::pending(state, &account.name).len() as u32,
         config_dir: account.dir.display().to_string(),
         is_default: account.is_default,
+        linked: account.is_linked(),
         name: account.name,
     }
 }
@@ -432,6 +433,10 @@ async fn rename_account(
             accounts::RenameError::Default => {
                 ApiError::invalid("The default account is ~/.claude; it can't be renamed from here.")
             }
+            accounts::RenameError::Linked => ApiError::forbidden(
+                "linked_account",
+                format!("{name} is a profile of the app on this Mac: rename it there."),
+            ),
             accounts::RenameError::InvalidName => ApiError::invalid(
                 "An account name starts with a letter or digit, then letters, digits, - and _ (64 at most), and isn't `default`.",
             ),
@@ -458,6 +463,12 @@ async fn delete_account(
             return Err(ApiError::forbidden(
                 "default_account",
                 "The default account is ~/.claude, which the server doesn't delete.",
+            ));
+        }
+        if account.is_linked() {
+            return Err(ApiError::forbidden(
+                "linked_account",
+                format!("{name} is a profile of the app on this Mac: delete it there."),
             ));
         }
         let lock = state.account_lock(&account.name);

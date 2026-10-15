@@ -346,7 +346,7 @@ function accountMenu(host: ConductorHost, a: ConductorAccount, model: OverviewMo
       label: isArchivedShown ? 'Hide Archived Sessions' : 'Archived Sessions',
       run: () => act.toggleArchived(host.id, name),
     },
-    a.account.isDefault
+    a.account.isDefault || a.account.linked
       ? null
       : {
           value: 'rename',
@@ -355,7 +355,7 @@ function accountMenu(host: ConductorHost, a: ConductorAccount, model: OverviewMo
           run: () =>
             act.openDialog({ kind: 'renameAccount', hostId: host.id, account: name, name, error: null, isBusy: false }),
         },
-    a.account.isDefault
+    a.account.isDefault || a.account.linked
       ? null
       : {
           value: 'delete',

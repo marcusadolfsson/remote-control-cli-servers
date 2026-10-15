@@ -32,6 +32,8 @@ export type RemoteAccount = {
   sessions: number
   runningSessions: number
   pendingResume?: number
+  /** A link to a profile the Mac app owns: rename and delete it there. */
+  linked?: boolean
 }
 
 export type TmuxWindow = { session: string; windowId: string; paneId: string }

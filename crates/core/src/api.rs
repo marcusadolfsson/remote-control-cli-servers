@@ -163,6 +163,10 @@ pub struct RemoteAccount {
     /// [`LogoutRequest::resume_after_sign_in`]).
     #[serde(default)]
     pub pending_resume: u32,
+    /// A link to a profile another app owns (the Mac app's, on a Mac serving
+    /// itself): it can't be renamed or deleted from here.
+    #[serde(default)]
+    pub linked: bool,
 }
 
 /// One session of an account, as the client's list shows it.

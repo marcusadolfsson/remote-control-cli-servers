@@ -22,6 +22,14 @@ pub struct AccountDir {
 }
 
 impl AccountDir {
+    /// Its folder under the accounts base is a link to a profile something
+    /// else owns (the Mac app's, on a Mac serving itself): the server uses it
+    /// but doesn't rename or delete it.
+    pub fn is_linked(&self) -> bool {
+        !self.is_default
+            && fs::symlink_metadata(&self.dir).is_ok_and(|meta| meta.file_type().is_symlink())
+    }
+
     /// `.claude.json`: inside the config dir for an account, in `$HOME` for the
     /// stock install (which keeps a copy inside too on some versions).
     fn claude_json_candidates(&self, home: &Path) -> Vec<PathBuf> {
@@ -204,6 +212,8 @@ pub fn taken(config: &Config, name: &str, except: Option<&str>) -> bool {
 pub enum RenameError {
     /// `default` is `~/.claude`, which isn't the server's to rename.
     Default,
+    /// A link to a profile another app owns (see [`AccountDir::is_linked`]).
+    Linked,
     InvalidName,
     Taken,
     Io(String),
@@ -220,6 +230,9 @@ pub fn rename(
 ) -> Result<AccountDir, RenameError> {
     if account.is_default {
         return Err(RenameError::Default);
+    }
+    if account.is_linked() {
+        return Err(RenameError::Linked);
     }
     if !valid_new_name(name) {
         return Err(RenameError::InvalidName);
@@ -264,6 +277,12 @@ pub fn rename(
 /// it. Returns where it went.
 pub fn trash(config: &Config, account: &AccountDir) -> std::io::Result<PathBuf> {
     use std::os::unix::fs::PermissionsExt;
+    if account.is_linked() {
+        return Err(io::Error::other(format!(
+            "{} is a link to a profile another app owns",
+            account.name
+        )));
+    }
     let trash = config.accounts_base.join(".trash");
     fs::create_dir_all(&trash)?;
     fs::set_permissions(&trash, fs::Permissions::from_mode(0o700))?;
@@ -539,5 +558,24 @@ mod tests {
         );
         assert!(!text.contains("/work/"), "{text}");
         assert!(find(&config, "office").is_some());
+    }
+
+    #[test]
+    fn uses_a_linked_profile_but_leaves_renaming_and_deleting_it_to_its_owner() {
+        let home = tempfile::tempdir().unwrap();
+        let config = config(home.path());
+        let owned = home.path().join("app/profiles/abc/cli-config");
+        fs::create_dir_all(&owned).unwrap();
+        fs::create_dir_all(&config.accounts_base).unwrap();
+        std::os::unix::fs::symlink(&owned, config.accounts_base.join("Marcus2")).unwrap();
+        let made = create(&config, "work").unwrap();
+
+        let linked = find(&config, "Marcus2").expect("a link is found like a folder");
+        assert!(linked.is_linked());
+        assert!(!made.is_linked());
+        assert_eq!(rename(&config, &linked, "Other"), Err(RenameError::Linked));
+        assert!(trash(&config, &linked).is_err());
+        assert!(owned.is_dir(), "the profile it links to is untouched");
+        assert!(find(&config, "Marcus2").is_some(), "and so is the link");
     }
 }
