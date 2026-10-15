@@ -1,7 +1,7 @@
 {
   "name": "remote-control-cli-servers",
   "displayName": "Remote Control CLI Servers",
-  "version": "0.8.2",
+  "version": "0.9.0",
   "description": "Your Linux hosts' Claude Code accounts and sessions, in a Claude Code pane",
   "author": {
     "name": "Marcus Adolfsson"
