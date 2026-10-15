@@ -147,14 +147,37 @@ pub fn install(home: &Path, start: bool) -> io::Result<PathBuf> {
     if start {
         let domain = format!("gui/{}", user_id()?);
         // Not loaded yet is fine: there's nothing to restart.
+        let service = format!("{domain}/{AGENT_LABEL}");
         let _ = Command::new("/bin/launchctl")
-            .args(["bootout", &format!("{domain}/{AGENT_LABEL}")])
+            .args(["bootout", &service])
             .stderr(Stdio::null())
             .status();
-        let status = Command::new("/bin/launchctl")
-            .args(["bootstrap", &domain])
-            .arg(&agent)
-            .status()?;
+        // `bootout` returns before the old one is gone, and loading it again
+        // meanwhile fails (I/O error, 5): wait for it, then retry once more.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        let mut status = None;
+        while std::time::Instant::now() < deadline {
+            let loaded = Command::new("/bin/launchctl")
+                .args(["print", &service])
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status()
+                .is_ok_and(|status| status.success());
+            if !loaded {
+                let tried = Command::new("/bin/launchctl")
+                    .args(["bootstrap", &domain])
+                    .arg(&agent)
+                    .stderr(Stdio::null())
+                    .status()?;
+                if tried.success() {
+                    status = Some(tried);
+                    break;
+                }
+                status = Some(tried);
+            }
+            std::thread::sleep(std::time::Duration::from_millis(250));
+        }
+        let status = status.unwrap_or_default();
         if !status.success() {
             return Err(io::Error::other(format!(
                 "launchctl bootstrap {domain} {} failed ({status})",
