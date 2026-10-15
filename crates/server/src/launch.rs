@@ -81,7 +81,7 @@ pub fn claude_argv(launch: &Launch) -> Vec<String> {
     } else {
         argv.push(format!(
             "CLAUDE_CONFIG_DIR={}",
-            launch.account.dir.display()
+            launch.account.config_dir().display()
         ));
     }
     argv.push(launch.claude.display().to_string());

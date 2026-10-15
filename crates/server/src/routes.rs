@@ -344,11 +344,21 @@ async fn set_settings(
     .await
 }
 
+/// Whether `account` is signed in. Claude keeps the sign-in in
+/// `.credentials.json` on Linux, but in the Keychain on macOS, where only
+/// Claude itself can say.
+fn signed_in(state: &ServerState, account: &accounts::AccountDir) -> bool {
+    account.signed_in()
+        || (cfg!(target_os = "macos")
+            && hostinfo::claude_path(&state.config)
+                .is_some_and(|claude| crate::login::signed_in(&claude, account)))
+}
+
 fn describe(state: &ServerState, account: accounts::AccountDir) -> RemoteAccount {
     let sessions = sessions::list(&account, state.processes.as_ref(), &state.transcripts);
     RemoteAccount {
         account: account.account(&state.config.home),
-        signed_in: account.signed_in(),
+        signed_in: signed_in(state, &account),
         signed_in_until: account.signed_in_until().and_then(|millis| {
             chrono::DateTime::<chrono::Utc>::from_timestamp_millis(millis as i64)
                 .map(|when| when.to_rfc3339())
@@ -1572,10 +1582,10 @@ async fn logout(
         if account.is_default {
             command.env_remove("CLAUDE_CONFIG_DIR");
         } else {
-            command.env("CLAUDE_CONFIG_DIR", &account.dir);
+            command.env("CLAUDE_CONFIG_DIR", account.config_dir());
         }
         let output = command.output().map_err(ApiError::internal)?;
-        if !output.status.success() || account.signed_in() {
+        if !output.status.success() || signed_in(&state, &account) {
             return Err(ApiError::conflict(
                 "logout_failed",
                 format!(

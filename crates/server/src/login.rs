@@ -124,7 +124,7 @@ impl Logins {
         if account.is_default {
             command.env_remove("CLAUDE_CONFIG_DIR");
         } else {
-            command.env("CLAUDE_CONFIG_DIR", &account.dir);
+            command.env("CLAUDE_CONFIG_DIR", account.config_dir());
         }
         let mut child = command.spawn().map_err(|err| LoginError::Failed {
             message: format!("could not run claude: {err}"),
@@ -368,7 +368,7 @@ pub fn signed_in(claude: &Path, account: &AccountDir) -> bool {
     if account.is_default {
         command.env_remove("CLAUDE_CONFIG_DIR");
     } else {
-        command.env("CLAUDE_CONFIG_DIR", &account.dir);
+        command.env("CLAUDE_CONFIG_DIR", account.config_dir());
     }
     conductor_core::child::run_within(&mut command, Vec::new(), STATUS_TIMEOUT)
         .ok()

@@ -30,6 +30,24 @@ impl AccountDir {
             && fs::symlink_metadata(&self.dir).is_ok_and(|meta| meta.file_type().is_symlink())
     }
 
+    /// What Claude gets as `CLAUDE_CONFIG_DIR`. For a linked profile, the
+    /// path the link names, exactly as its owner wrote it: on macOS Claude
+    /// keys the profile's sign-in in the Keychain by a hash of this string,
+    /// so the link's own path would be a different, signed-out profile.
+    pub fn config_dir(&self) -> PathBuf {
+        if !self.is_linked() {
+            return self.dir.clone();
+        }
+        match fs::read_link(&self.dir) {
+            Ok(target) if target.is_absolute() => target,
+            Ok(target) => self
+                .dir
+                .parent()
+                .map_or_else(|| target.clone(), |base| base.join(&target)),
+            Err(_) => self.dir.clone(),
+        }
+    }
+
     /// `.claude.json`: inside the config dir for an account, in `$HOME` for the
     /// stock install (which keeps a copy inside too on some versions).
     fn claude_json_candidates(&self, home: &Path) -> Vec<PathBuf> {
@@ -573,6 +591,12 @@ mod tests {
         let linked = find(&config, "Marcus2").expect("a link is found like a folder");
         assert!(linked.is_linked());
         assert!(!made.is_linked());
+        assert_eq!(
+            linked.config_dir(),
+            owned,
+            "Claude gets the path the link names"
+        );
+        assert_eq!(made.config_dir(), made.dir);
         assert_eq!(rename(&config, &linked, "Other"), Err(RenameError::Linked));
         assert!(trash(&config, &linked).is_err());
         assert!(owned.is_dir(), "the profile it links to is untouched");

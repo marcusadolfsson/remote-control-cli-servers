@@ -451,7 +451,7 @@ pub fn claude_merge(
             "--strict-mcp-config",
         ])
         .current_dir(&scratch)
-        .env("CLAUDE_CONFIG_DIR", &prepared.destination.dir);
+        .env("CLAUDE_CONFIG_DIR", prepared.destination.config_dir());
     let finished = run_within(&mut command, prompt.into_bytes(), MERGE_TIMEOUT);
     let _ = fs::remove_dir_all(&scratch);
     let finished = finished.map_err(ApiError::internal)?.ok_or_else(|| {

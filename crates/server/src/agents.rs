@@ -114,7 +114,7 @@ fn ask(claude: &Path, account: &AccountDir) -> Answer {
     if account.is_default {
         command.env_remove("CLAUDE_CONFIG_DIR");
     } else {
-        command.env("CLAUDE_CONFIG_DIR", &account.dir);
+        command.env("CLAUDE_CONFIG_DIR", account.config_dir());
     }
     let finished = run_within(&mut command, Vec::new(), TIMEOUT).ok()??;
     if !finished.status.success() {

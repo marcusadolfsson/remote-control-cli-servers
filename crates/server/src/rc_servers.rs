@@ -231,7 +231,10 @@ pub fn server_argv(start: &Start) -> Vec<String> {
     if start.account.is_default {
         argv.extend(["-u".to_owned(), "CLAUDE_CONFIG_DIR".to_owned()]);
     } else {
-        argv.push(format!("CLAUDE_CONFIG_DIR={}", start.account.dir.display()));
+        argv.push(format!(
+            "CLAUDE_CONFIG_DIR={}",
+            start.account.config_dir().display()
+        ));
     }
     argv.extend([
         start.claude.display().to_string(),
