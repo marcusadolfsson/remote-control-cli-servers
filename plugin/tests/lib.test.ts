@@ -1,4 +1,4 @@
-import type { LaunchResult, RemoteAccount, RemoteSession, TransferPlan } from '../hooks/lib/wire'
+import type { LaunchResult, RcServer, RemoteAccount, RemoteSession, TransferPlan } from '../hooks/lib/wire'
 
 import { describe, expect, test } from 'claude-code/testing'
 
@@ -20,6 +20,7 @@ import { automaticMemory, memoryDecisions, planSummary, progressId } from '../ho
 import { accountNameHint, isValidAccountName, isValidSessionName, suffixProblem } from '../hooks/lib/names'
 import { decodeBase64Url, decodePairingCode, formatFingerprint } from '../hooks/lib/pairing'
 import { findSession, splitProfile } from '../hooks/lib/refs'
+import { groupByServer, servingServer } from '../hooks/lib/served'
 import { launchNote, launchTitle, signOutBody, switchEffect } from '../hooks/lib/texts'
 import { sessionJson, toolDecisions } from '../hooks/lib/tools'
 
@@ -400,5 +401,56 @@ describe('the band', () => {
     const two = bandModel([host('atlas', [{ running: true, waiting: true }, { running: true, waiting: true }])])
     expect(two.waiting).toBe(2)
     expect(two.only, 'the button opens the pane when more than one waits').toBeNull()
+  })
+})
+
+describe('sessions a Remote Control server serves', () => {
+  const server = (pid: number, folder: string): RcServer => ({
+    pid,
+    folder,
+    name: null,
+    spawn: 'same-dir',
+    sessions: 0,
+    window: null,
+    environmentUrl: null,
+    attention: null,
+  })
+  const session = (id: string, cwd: string, over: Partial<RemoteSession> = {}): RemoteSession => ({
+    id,
+    cwd,
+    title: id,
+    named: false,
+    lastPrompt: null,
+    updatedAt: '2026-10-02T12:00:00Z',
+    sizeBytes: 0,
+    running: true,
+    window: null,
+    remoteControl: true,
+    ...over,
+  })
+
+  test('served sessions go under their server; the CLI ones and stopped ones stay apart', () => {
+    const servers = [server(1, '/www/vb4'), server(2, '/www/vb4/sub')]
+    const sessions = [
+      session('cli', '/www/vb4'),
+      session('served', '/www/vb4', { served: true }),
+      session('worktree', '/www/vb4/.claude/worktrees/a1', { served: true }),
+      session('nested', '/www/vb4/sub', { served: true }),
+      session('stopped', '/www/vb4', { served: true, running: false }),
+      session('sibling', '/www/vb40', { served: true }),
+    ]
+    const { byServer, rest } = groupByServer(sessions, servers)
+    expect(byServer.get(1)?.map((s) => s.id)).toEqual(['served', 'worktree'])
+    expect(byServer.get(2)?.map((s) => s.id), 'the deepest folder wins').toEqual(['nested'])
+    expect(
+      rest.map((s) => s.id),
+      'a served session with no server listed is still shown',
+    ).toEqual(['cli', 'stopped', 'sibling'])
+  })
+
+  test('no servers, or none known yet', () => {
+    const served = session('served', '/www/vb4', { served: true })
+    expect(servingServer(served, [])).toBeUndefined()
+    expect(groupByServer([served], null).rest).toEqual([served])
   })
 })

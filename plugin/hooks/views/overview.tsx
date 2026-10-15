@@ -32,6 +32,7 @@ import {
   stampToIso,
   updateVersions,
 } from '../lib/format'
+import { groupByServer } from '../lib/served'
 import { Icon, type IconName } from './icons'
 
 /** Previous sessions shown before "Show all". */
@@ -369,8 +370,9 @@ function accountMenu(host: ConductorHost, a: ConductorAccount, model: OverviewMo
 function AccountBlock(ui: Ui, host: ConductorHost, a: ConductorAccount, model: OverviewModel, act: Act) {
   const { Box, Button, Text } = ui
   const name = a.account.name
-  const running = a.sessions.filter((s) => s.running)
-  const previous = a.sessions.filter((s) => !s.running)
+  const { byServer, rest } = groupByServer(a.sessions, a.servers)
+  const running = rest.filter((s) => s.running)
+  const previous = rest.filter((s) => !s.running)
   const key = accountKey(host.id, name)
   const isAll = model.showAll.includes(key)
   const shown = isAll ? previous : previous.slice(0, PREVIOUS_SHOWN)
@@ -413,11 +415,13 @@ function AccountBlock(ui: Ui, host: ConductorHost, a: ConductorAccount, model: O
       {a.error && <Text color="error"> {a.error}</Text>}
       {(a.servers?.length ?? 0) > 0 && (
         <Box flexDirection="column" marginTop={1} rowGap={ui.surface === 'desktop' ? 1 : 0}>
-          {(a.servers ?? []).map((server) => ServerRow(ui, host, name, server, model, act))}
+          {(a.servers ?? []).map((server) =>
+            ServerBlock(ui, host, name, server, byServer.get(server.pid) ?? [], model, act),
+          )}
         </Box>
       )}
       {a.sessions.length === 0 && !a.error && <Text dimColor>{'    '}No sessions yet.</Text>}
-      <Box flexDirection="column" marginTop={a.sessions.length ? 1 : 0} rowGap={ui.surface === 'desktop' ? 1 : 0}>
+      <Box flexDirection="column" marginTop={rest.length ? 1 : 0} rowGap={ui.surface === 'desktop' ? 1 : 0}>
         {[...running, ...shown].map((s, i, all) => SessionRow(ui, host, name, s, i === all.length - 1, model, act))}
       </Box>
       {previous.length > PREVIOUS_SHOWN && (
@@ -607,6 +611,29 @@ function ServerRow(ui: Ui, host: ConductorHost, account: string, server: RcServe
         {server.attention && <Text color="warning">Waiting for you</Text>}
         {items.length > 0 && Menu(ui, `rm-${server.pid}`, items, model, act)}
       </Box>
+    </Box>
+  )
+}
+
+/** A server's row, then the sessions it serves, set in beneath it. */
+function ServerBlock(
+  ui: Ui,
+  host: ConductorHost,
+  account: string,
+  server: RcServer,
+  served: Array<RemoteSession>,
+  model: OverviewModel,
+  act: Act,
+) {
+  const { Box } = ui
+  return (
+    <Box key={`rcb-${server.pid}`} flexDirection="column" rowGap={ui.surface === 'desktop' ? 1 : 0}>
+      {ServerRow(ui, host, account, server, model, act)}
+      {served.length > 0 && (
+        <Box flexDirection="column" marginLeft={2} rowGap={ui.surface === 'desktop' ? 1 : 0}>
+          {served.map((s, i) => SessionRow(ui, host, account, s, i === served.length - 1, model, act))}
+        </Box>
+      )}
     </Box>
   )
 }

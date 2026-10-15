@@ -128,6 +128,15 @@ export function demoHosts(now: number): Array<DemoHost> {
             }),
             session(now, 'docs-site', '/home/sam/northwind/docs', 3 * DAY),
             session(now, 'flaky-tests', '/home/sam/northwind/ci', 12 * DAY),
+            session(now, 'northwind-4f', '/home/sam/northwind/.claude/worktrees/4f', 8 * 60_000, {
+              running: true,
+              served: true,
+            }),
+            session(now, 'northwind-a2', '/home/sam/northwind/.claude/worktrees/a2', 30 * 60_000, {
+              running: true,
+              served: true,
+              empty: true,
+            }),
           ],
           servers: [server(4121, '/home/sam/northwind', 'northwind (ATL)', 'worktree', 2)],
         },
