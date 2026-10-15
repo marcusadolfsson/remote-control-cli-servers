@@ -214,6 +214,11 @@ pub struct RemoteSession {
     /// `update_pending`: what a restart takes it to.
     #[serde(default)]
     pub installed_version: Option<String>,
+    /// A Remote Control server (`claude remote-control`) started it for
+    /// someone on another device, and serves it: it runs in the server's
+    /// window, and comes back with the server rather than on its own.
+    #[serde(default)]
+    pub served: bool,
 }
 
 /// A tmux window running a Claude session.
@@ -239,6 +244,61 @@ pub struct NewSessionRequest {
     /// Control can't connect until the folder is trusted.
     #[serde(default)]
     pub trust_folder: bool,
+}
+
+/// A Remote Control server: `claude remote-control` running in a folder, so
+/// the Claude apps can start new sessions there. `GET
+/// /v1/accounts/{name}/rc-servers` lists the account's, wherever they were
+/// started.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RcServer {
+    pub pid: i32,
+    /// The folder its sessions start in.
+    pub folder: String,
+    /// `--name`: what the Claude apps call it.
+    pub name: Option<String>,
+    /// `--spawn`: `same-dir` (every session in the folder), `worktree` (each in
+    /// a git worktree of its own) or `session` (one session only).
+    pub spawn: String,
+    /// The sessions it serves now.
+    pub sessions: u32,
+    /// The window it runs in, when this server started it there: then it can
+    /// be shown, typed into and stopped from the app.
+    pub window: Option<TmuxWindow>,
+    /// Its page on claude.ai (`https://claude.ai/code?environment=env_…`),
+    /// read off its window once it has connected.
+    pub environment_url: Option<String>,
+    /// It's waiting for someone in its window before it connects.
+    pub attention: Option<Attention>,
+}
+
+/// `POST /v1/accounts/{name}/rc-servers`: start a Remote Control server in a
+/// folder, in a tmux window of its own.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StartRcServerRequest {
+    pub folder: String,
+    /// What the Claude apps call it; the folder's name when left out.
+    #[serde(default)]
+    pub name: Option<String>,
+    /// `same-dir` (the default) or `worktree`.
+    #[serde(default)]
+    pub spawn: Option<String>,
+    /// Answer its "Trust <folder>?" question with yes, as for a new session.
+    #[serde(default)]
+    pub trust_folder: bool,
+}
+
+/// What starting a Remote Control server came to.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StartRcServerResult {
+    pub server: RcServer,
+    /// One was running in the folder already: this is it, nothing started.
+    pub already_running: bool,
+    /// `tmux attach …` for its window, when it has one.
+    pub attach_command: Option<String>,
 }
 
 /// `POST /v1/accounts/{name}/sessions/{id}/resume`.
@@ -476,6 +536,7 @@ mod tests {
             claude_version: None,
             update_pending: false,
             installed_version: None,
+            served: false,
         };
         let json = serde_json::to_value(&session).unwrap();
         assert_eq!(json["lastPrompt"], serde_json::Value::Null);

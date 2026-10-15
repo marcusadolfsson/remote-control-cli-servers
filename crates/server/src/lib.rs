@@ -20,6 +20,7 @@ pub mod memory;
 pub mod moves;
 pub mod pairing_code;
 pub mod procs;
+pub mod rc_servers;
 pub mod rename;
 pub mod revive;
 pub mod routes;

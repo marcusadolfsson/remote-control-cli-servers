@@ -176,6 +176,14 @@ pub fn router(state: Shared) -> Router {
             "/v1/accounts/{name}/windows/{window}/keys",
             post(window_keys),
         )
+        .route(
+            "/v1/accounts/{name}/rc-servers",
+            get(list_rc_servers).post(start_rc_server),
+        )
+        .route(
+            "/v1/accounts/{name}/rc-servers/{pid}/stop",
+            post(stop_rc_server),
+        )
         .route("/v1/fs/dirs", get(list_dirs))
         .route("/v1/clients/self", delete(unpair))
         .route_layer(middleware::from_fn_with_state(state.clone(), require_token));
@@ -794,6 +802,90 @@ async fn new_session(
         );
         state.processes.changed(&account);
         started.map(Json)
+    })
+    .await
+}
+
+async fn list_rc_servers(
+    State(state): State<Shared>,
+    UrlPath(name): UrlPath<String>,
+) -> Result<Json<Vec<conductor_core::api::RcServer>>, ApiError> {
+    blocking(move || {
+        let account = account_or_404(&state, &name)?;
+        Ok(Json(crate::rc_servers::list(&state.tmux, &account)))
+    })
+    .await
+}
+
+/// Start a Remote Control server in a folder, so the Claude apps can start
+/// sessions there, or find the one running there already.
+async fn start_rc_server(
+    State(state): State<Shared>,
+    UrlPath(name): UrlPath<String>,
+    Json(request): Json<conductor_core::api::StartRcServerRequest>,
+) -> Result<Json<conductor_core::api::StartRcServerResult>, ApiError> {
+    let spawn = request.spawn.clone().unwrap_or_else(|| "same-dir".into());
+    if !crate::rc_servers::SPAWN_MODES.contains(&spawn.as_str()) {
+        return Err(ApiError::invalid("Spawn is same-dir or worktree."));
+    }
+    blocking(move || {
+        let account = account_or_404(&state, &name)?;
+        let claude = launch_tools(&state)?;
+        let folder = dirs::resolve_inside(
+            &state.config.folder_roots,
+            &state.config.home,
+            &request.folder,
+        )?;
+        let folder_name = folder
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let suffix = state.store.settings()?.remote_control_suffix;
+        let server_name = session_name(request.name)?
+            .or_else(|| (!folder_name.is_empty()).then(|| folder_name.clone()))
+            .map(|name| launch::with_host_suffix(name, suffix.as_deref()));
+        let window_name = tmux::window_name(
+            &format!("rc {}", server_name.as_deref().unwrap_or(&folder_name)),
+            &format!("{}-rc", account.name),
+        );
+        let lock = state.account_lock(&account.name);
+        let _held = lock
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let started = crate::rc_servers::start(
+            &state.tmux,
+            &crate::rc_servers::Start {
+                account: &account,
+                claude: &claude,
+                folder: &folder,
+                name: server_name,
+                spawn,
+                window_name,
+                trust_folder: request.trust_folder,
+            },
+        );
+        crate::revive::remember(&state);
+        started.map(Json)
+    })
+    .await
+}
+
+/// Stop a Remote Control server this server started. Its sessions stop
+/// answering, and come back if one is started in the folder again within a
+/// few hours.
+async fn stop_rc_server(
+    State(state): State<Shared>,
+    UrlPath((name, pid)): UrlPath<(String, i32)>,
+) -> Result<Json<StopResult>, ApiError> {
+    blocking(move || {
+        let account = account_or_404(&state, &name)?;
+        let lock = state.account_lock(&account.name);
+        let _held = lock
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let was_running = crate::rc_servers::stop(&state.tmux, &account, pid)?;
+        crate::revive::remember(&state);
+        Ok(Json(StopResult { was_running }))
     })
     .await
 }

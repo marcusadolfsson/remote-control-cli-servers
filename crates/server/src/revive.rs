@@ -6,6 +6,10 @@
 //! whenever it stops one), and when it starts ([`revive`]) after a reboot, or
 //! finds its tmux session gone, it resumes each of them that isn't running,
 //! in its folder, with Remote Control, as Resume would.
+//!
+//! The same goes for the Remote Control servers it started: each is started
+//! again in its folder, which brings back the sessions it was serving. Those
+//! sessions aren't resumed on their own.
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -16,6 +20,7 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 
 use crate::accounts;
+use crate::rc_servers;
 use crate::routes::{resume_held, ServerState};
 use crate::sessions;
 
@@ -30,6 +35,18 @@ struct Snapshot {
     /// The kernel's id for this boot, so a later start can tell it rebooted.
     boot_id: Option<String>,
     sessions: Vec<Remembered>,
+    /// The Remote Control servers started from here.
+    #[serde(default)]
+    servers: Vec<RememberedServer>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+struct RememberedServer {
+    account: String,
+    folder: String,
+    name: Option<String>,
+    spawn: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -52,9 +69,21 @@ fn boot_id() -> Option<String> {
 /// Write down the sessions running in tmux now, in every account.
 pub fn remember(state: &ServerState) {
     let mut remembered = Vec::new();
+    let mut servers = Vec::new();
     for account in accounts::discover(&state.config) {
+        for server in rc_servers::list(&state.tmux, &account) {
+            if server.window.is_some() {
+                servers.push(RememberedServer {
+                    account: account.name.clone(),
+                    folder: server.folder,
+                    name: server.name,
+                    spawn: server.spawn,
+                });
+            }
+        }
         for (id, entry) in sessions::running(&account, state.processes.as_ref()) {
-            if entry.tmux_location().is_some() {
+            // A Remote Control server's sessions come back with it.
+            if entry.tmux_location().is_some() && !rc_servers::is_served(&entry) {
                 remembered.push(Remembered {
                     account: account.name.clone(),
                     id,
@@ -63,9 +92,11 @@ pub fn remember(state: &ServerState) {
         }
     }
     remembered.sort_by(|a, b| (&a.account, &a.id).cmp(&(&b.account, &b.id)));
+    servers.sort_by(|a, b| (&a.account, &a.folder).cmp(&(&b.account, &b.folder)));
     let snapshot = Snapshot {
         boot_id: boot_id(),
         sessions: remembered,
+        servers,
     };
     let Ok(text) = serde_json::to_string_pretty(&snapshot) else {
         return;
@@ -94,7 +125,7 @@ pub fn revive(state: &ServerState) -> Vec<(String, String, Result<(), String>)> 
     else {
         return Vec::new();
     };
-    if snapshot.sessions.is_empty()
+    if (snapshot.sessions.is_empty() && snapshot.servers.is_empty())
         || !gone(
             snapshot.boot_id.as_deref(),
             boot_id().as_deref(),
@@ -104,6 +135,17 @@ pub fn revive(state: &ServerState) -> Vec<(String, String, Result<(), String>)> 
         return Vec::new();
     }
     let mut outcomes = Vec::new();
+    for server in snapshot.servers {
+        let Some(account) = accounts::find(&state.config, &server.account) else {
+            continue;
+        };
+        let outcome = revive_server(state, &account, &server);
+        outcomes.push((
+            server.account,
+            format!("Remote Control server in {}", server.folder),
+            outcome,
+        ));
+    }
     for remembered in snapshot.sessions {
         let Some(account) = accounts::find(&state.config, &remembered.account) else {
             continue;
@@ -121,6 +163,40 @@ pub fn revive(state: &ServerState) -> Vec<(String, String, Result<(), String>)> 
         outcomes.push((remembered.account, remembered.id, outcome));
     }
     outcomes
+}
+
+/// Start a remembered Remote Control server again, unless one runs in its
+/// folder already.
+fn revive_server(
+    state: &ServerState,
+    account: &accounts::AccountDir,
+    server: &RememberedServer,
+) -> Result<(), String> {
+    let claude = crate::hostinfo::claude_path(&state.config)
+        .ok_or_else(|| "Claude Code isn't installed.".to_owned())?;
+    let folder = std::path::Path::new(&server.folder);
+    let lock = state.account_lock(&account.name);
+    let _held = lock
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    rc_servers::start(
+        &state.tmux,
+        &rc_servers::Start {
+            account,
+            claude: &claude,
+            folder,
+            name: server.name.clone(),
+            spawn: server.spawn.clone(),
+            window_name: crate::tmux::window_name(
+                &format!("rc {}", server.name.as_deref().unwrap_or(&server.folder)),
+                &format!("{}-rc", account.name),
+            ),
+            // It was trusted when it last ran.
+            trust_folder: false,
+        },
+    )
+    .map(|_| ())
+    .map_err(|err| err.message)
 }
 
 /// Sessions a sign-out stopped, by account, to resume at the next sign-in.
